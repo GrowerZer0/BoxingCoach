@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
-import { supabase } from '../lib/supabase';
-import { useWorkout } from '../contexts/WorkoutContext';
+import { supabase } from '@/lib/supabase';
+import { useWorkout } from '@/contexts/WorkoutContext';
 
 interface Workout {
   id: string;

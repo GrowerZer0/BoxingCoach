@@ -1,12 +1,12 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { supabase } from '../lib/supabase';
-import { getCurrentUser } from '../lib/auth';
-import { WorkoutProvider, useWorkout } from '../contexts/WorkoutContext';
-import Timer from '../components/Timer';
-import History from '../components/History';
-import AuthScreen from '../components/AuthScreen';
+import { supabase } from '@/lib/supabase';
+import { getCurrentUser } from '@/lib/auth';
+import { WorkoutProvider, useWorkout } from '@/contexts/WorkoutContext';
+import Timer from '@/app/components/Timer';
+import History from '@/app/components/History';
+import AuthScreen from '@/app/components/AuthScreen';
 import { User } from '@supabase/supabase-js';
 
 function Dashboard() {

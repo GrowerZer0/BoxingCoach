@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { supabase } from '../lib/supabase';
-import { saveRound, saveCallout, incrementCalloutCount } from '../lib/workouts';
+import { supabase } from '@/lib/supabase';
+import { saveRound, saveCallout, incrementCalloutCount } from '@/lib/workouts';
 
 interface TimerProps {
   roundLength: number;
