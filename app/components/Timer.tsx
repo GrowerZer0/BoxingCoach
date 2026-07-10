@@ -24,6 +24,7 @@ export default function Timer({
   onWorkoutEnd,
   currentWorkoutId,
 }: TimerProps) {
+  // --- Core state ---
   const [phase, setPhase] = useState<'idle' | 'round' | 'rest' | 'paused'>('idle');
   const [elapsed, setElapsed] = useState(0);
   const [roundNumber, setRoundNumber] = useState(0);
@@ -32,13 +33,55 @@ export default function Timer({
   const [calloutType, setCalloutType] = useState<'offense' | 'defense' | 'mixed' | null>(null);
   const [currentRoundId, setCurrentRoundId] = useState<string | null>(null);
   const [logs, setLogs] = useState<{ text: string; type: string; time: string }[]>([]);
-
   const timerRef = useRef<NodeJS.Timeout | null>(null);
   const cadenceRef = useRef<NodeJS.Timeout | null>(null);
   const maxTimeRef = useRef(roundLength);
   const isActiveRef = useRef(false);
 
-  // --- Speech ---
+  // --- Speech & voice state ---
+  const [voices, setVoices] = useState<SpeechSynthesisVoice[]>([]);
+  const [selectedVoice, setSelectedVoice] = useState<SpeechSynthesisVoice | null>(null);
+  const [genderFilter, setGenderFilter] = useState<'all' | 'male' | 'female'>('all');
+  const [minDelay, setMinDelay] = useState(intensity === 'pressure' ? 1200 : 2800);
+  const [maxDelay, setMaxDelay] = useState(intensity === 'pressure' ? 2800 : 5500);
+
+  // --- Load voices with retry ---
+  useEffect(() => {
+    let retries = 0;
+    const loadVoices = () => {
+      const allVoices = window.speechSynthesis.getVoices();
+      if (allVoices.length === 0 && retries < 5) {
+        retries++;
+        setTimeout(loadVoices, 500);
+        return;
+      }
+      let enVoices = allVoices.filter(v => v.lang.startsWith('en'));
+      // Apply gender filter
+      if (genderFilter === 'male') {
+        enVoices = enVoices.filter(v => /male|david|daniel|mark|paul|george|andrew/i.test(v.name));
+      } else if (genderFilter === 'female') {
+        enVoices = enVoices.filter(v => /female|samantha|zira|susan|kate|emma|julie|alice/i.test(v.name));
+      }
+      setVoices(enVoices);
+      if (enVoices.length > 0 && !selectedVoice) {
+        setSelectedVoice(enVoices[0]);
+      }
+    };
+    loadVoices();
+    window.speechSynthesis.onvoiceschanged = loadVoices;
+  }, [genderFilter]);
+
+  // --- Speech initialization (required for iOS) ---
+  const initializeSpeech = useCallback(() => {
+    if (!window.speechSynthesis) return;
+    window.speechSynthesis.getVoices();
+    // Speak a silent character to unlock audio context on iOS
+    const silent = new SpeechSynthesisUtterance(' ');
+    silent.volume = 0;
+    window.speechSynthesis.speak(silent);
+  }, []);
+
+  // --- Speak function ---
   const speak = useCallback((text: string) => {
     if (!window.speechSynthesis) return;
     window.speechSynthesis.cancel();
@@ -48,11 +91,9 @@ export default function Timer({
     utterance.rate = intensity === 'pressure' ? 0.95 : 0.85;
     utterance.pitch = 1.0;
     utterance.volume = 1.0;
-    const voices = window.speechSynthesis.getVoices();
-    const preferred = voices.find(v => v.lang.startsWith('en') && (v.name.includes('Google') || v.name.includes('Samantha') || v.name.includes('Zira')));
-    if (preferred) utterance.voice = preferred;
+    if (selectedVoice) utterance.voice = selectedVoice;
     window.speechSynthesis.speak(utterance);
-  }, [intensity]);
+  }, [intensity, selectedVoice]);
 
   // --- Generate callout ---
   const generateCallout = useCallback(() => {
@@ -77,13 +118,11 @@ export default function Timer({
     }
   }, [intensity]);
 
-  // --- Schedule next cadence ---
+  // --- Schedule next cadence (uses min/max delay) ---
   const scheduleCadence = useCallback(() => {
     if (!isActiveRef.current) return;
     if (cadenceRef.current) clearTimeout(cadenceRef.current);
 
-    const minDelay = intensity === 'pressure' ? 1200 : 2800;
-    const maxDelay = intensity === 'pressure' ? 2800 : 5500;
     const delay = Math.floor(Math.random() * (maxDelay - minDelay + 1)) + minDelay;
 
     cadenceRef.current = setTimeout(() => {
@@ -101,11 +140,8 @@ export default function Timer({
           callout_text: callout.text,
           callout_type: callout.type,
         });
-        // Increment callout count
-        supabase
-          .from('workout_rounds')
-          .update({ callout_count: incrementCalloutCount(currentRoundId) })
-          .eq('id', currentRoundId);
+        // Increment callout count using the helper
+        incrementCalloutCount(currentRoundId);
       }
 
       // Local log
@@ -114,7 +150,7 @@ export default function Timer({
 
       scheduleCadence();
     }, delay);
-  }, [intensity, generateCallout, speak, currentWorkoutId, currentRoundId]);
+  }, [maxDelay, minDelay, generateCallout, speak, currentWorkoutId, currentRoundId]);
 
   // --- Timer tick ---
   const tick = useCallback(() => {
@@ -132,7 +168,6 @@ export default function Timer({
           setRemaining(restLength);
           isActiveRef.current = false;
           if (cadenceRef.current) clearTimeout(cadenceRef.current);
-          // Update total rounds
           supabase
             .from('workouts')
             .update({ total_rounds: roundNumber })
@@ -147,7 +182,6 @@ export default function Timer({
           setElapsed(0);
           setRemaining(roundLength);
           isActiveRef.current = true;
-          // Create new round in DB
           if (currentWorkoutId) {
             saveRound({
               workout_id: currentWorkoutId,
@@ -169,10 +203,11 @@ export default function Timer({
 
   // --- Start / Pause / Reset ---
   const startTimer = useCallback(async () => {
+    // Initialize speech on first start (unlock audio on mobile)
+    initializeSpeech();
+
     if (phase === 'idle') {
-      // Start workout via parent callback
       await onWorkoutStart(intensity);
-      // Now currentWorkoutId should be set by parent
       if (!currentWorkoutId) {
         console.error('Workout ID not set after start');
         return;
@@ -185,7 +220,6 @@ export default function Timer({
       setRemaining(roundLength);
       isActiveRef.current = true;
 
-      // Create first round
       const { data } = await saveRound({
         workout_id: currentWorkoutId,
         round_number: 1,
@@ -198,11 +232,11 @@ export default function Timer({
       timerRef.current = setInterval(tick, 1000);
       scheduleCadence();
     } else if (phase === 'paused') {
-      setPhase('round'); // or 'rest'? we'll just resume to same phase
+      setPhase('round');
       isActiveRef.current = true;
       timerRef.current = setInterval(tick, 1000);
     }
-  }, [phase, roundLength, intensity, tick, scheduleCadence, currentWorkoutId, onWorkoutStart]);
+  }, [phase, roundLength, intensity, tick, scheduleCadence, currentWorkoutId, onWorkoutStart, initializeSpeech]);
 
   const pauseTimer = useCallback(() => {
     if (phase === 'round' || phase === 'rest') {
@@ -227,7 +261,6 @@ export default function Timer({
     setCurrentRoundId(null);
     isActiveRef.current = false;
     setLogs([]);
-    // End workout if active
     if (currentWorkoutId) {
       await onWorkoutEnd();
     }
@@ -245,6 +278,98 @@ export default function Timer({
   // --- UI ---
   return (
     <div className="max-w-2xl mx-auto p-4">
+      {/* Settings panel (expandable or always visible) */}
+      <div className="bg-gray-800 rounded-xl p-4 mb-4 border border-gray-700">
+        <h3 className="text-sm font-semibold text-gray-400 uppercase mb-3">⚙️ Settings</h3>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          {/* Voice selection */}
+          <div>
+            <label className="text-xs font-semibold text-gray-400 uppercase">Voice</label>
+            <select
+              className="w-full p-2 bg-gray-700 border border-gray-600 rounded text-white text-sm"
+              value={selectedVoice?.name || ''}
+              onChange={(e) => {
+                const voice = voices.find(v => v.name === e.target.value);
+                if (voice) setSelectedVoice(voice);
+              }}
+            >
+              {voices.map((v) => (
+                <option key={v.name} value={v.name}>
+                  {v.name} ({v.lang})
+                </option>
+              ))}
+            </select>
+            <button
+              onClick={() => {
+                initializeSpeech();
+                setTimeout(() => speak('Hello, let\'s train!'), 300);
+              }}
+              className="mt-1 text-sm text-yellow-400 hover:text-yellow-300"
+            >
+              🔊 Test Voice
+            </button>
+          </div>
+
+          {/* Gender filter */}
+          <div>
+            <label className="text-xs font-semibold text-gray-400 uppercase">Gender Filter</label>
+            <div className="flex gap-2 mt-1">
+              <button
+                className={`px-3 py-1 text-xs rounded ${genderFilter === 'all' ? 'bg-yellow-500 text-gray-900' : 'bg-gray-600'}`}
+                onClick={() => setGenderFilter('all')}
+              >
+                All
+              </button>
+              <button
+                className={`px-3 py-1 text-xs rounded ${genderFilter === 'male' ? 'bg-yellow-500 text-gray-900' : 'bg-gray-600'}`}
+                onClick={() => setGenderFilter('male')}
+              >
+                Male
+              </button>
+              <button
+                className={`px-3 py-1 text-xs rounded ${genderFilter === 'female' ? 'bg-yellow-500 text-gray-900' : 'bg-gray-600'}`}
+                onClick={() => setGenderFilter('female')}
+              >
+                Female
+              </button>
+            </div>
+          </div>
+
+          {/* Cadence delay sliders */}
+          <div>
+            <label className="text-xs font-semibold text-gray-400 uppercase">Min Delay (ms)</label>
+            <div className="flex items-center gap-2">
+              <input
+                type="range"
+                min="500"
+                max="5000"
+                step="100"
+                value={minDelay}
+                onChange={(e) => setMinDelay(Number(e.target.value))}
+                className="flex-1"
+              />
+              <span className="text-sm text-gray-300 w-12">{minDelay}</span>
+            </div>
+          </div>
+          <div>
+            <label className="text-xs font-semibold text-gray-400 uppercase">Max Delay (ms)</label>
+            <div className="flex items-center gap-2">
+              <input
+                type="range"
+                min="1000"
+                max="8000"
+                step="100"
+                value={maxDelay}
+                onChange={(e) => setMaxDelay(Number(e.target.value))}
+                className="flex-1"
+              />
+              <span className="text-sm text-gray-300 w-12">{maxDelay}</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Timer display */}
       <div className="text-center mb-4">
         <div className={`text-7xl font-bold font-mono ${phase === 'round' ? 'text-red-400' : phase === 'rest' ? 'text-blue-400' : 'text-gray-300'}`}>
           {Math.floor(remaining / 60)}:{(remaining % 60).toString().padStart(2, '0')}
@@ -257,6 +382,7 @@ export default function Timer({
         </div>
       </div>
 
+      {/* Callout box */}
       <div className="bg-gray-800 rounded-2xl p-6 mb-4 min-h-24 flex items-center justify-center border border-gray-700">
         <div className="text-2xl font-semibold text-center">
           {calloutText}
@@ -268,6 +394,7 @@ export default function Timer({
         </div>
       </div>
 
+      {/* Controls */}
       <div className="flex gap-3 justify-center mb-6">
         <button
           onClick={startTimer}
@@ -291,6 +418,7 @@ export default function Timer({
         </button>
       </div>
 
+      {/* Log */}
       <div className="bg-gray-800 rounded-xl p-4 border border-gray-700">
         <div className="flex justify-between items-center mb-2">
           <h3 className="text-sm font-semibold text-gray-400 uppercase">Callout Log</h3>

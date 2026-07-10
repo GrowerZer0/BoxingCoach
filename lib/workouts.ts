@@ -49,6 +49,7 @@ export async function getWorkoutStats() {
 }
 
 export async function incrementCalloutCount(roundId: string) {
+  // First get current count
   const { data, error } = await supabase
     .from('workout_rounds')
     .select('callout_count')
