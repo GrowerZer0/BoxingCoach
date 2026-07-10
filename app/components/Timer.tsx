@@ -42,7 +42,8 @@ export default function Timer({
   const speak = useCallback((text: string) => {
     if (!window.speechSynthesis) return;
     window.speechSynthesis.cancel();
-    const utterance = new SpeechSynthesisUtterance(text);
+    const cleanText = text.replace(/-/g, ' ').replace(/\s+/g, ' ').trim();
+    const utterance = new SpeechSynthesisUtterance(cleanText);
     utterance.lang = 'en-US';
     utterance.rate = intensity === 'pressure' ? 0.95 : 0.85;
     utterance.pitch = 1.0;
