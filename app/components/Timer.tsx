@@ -9,6 +9,8 @@ interface TimerProps {
   onWorkoutStart: (intensity: 'pressure' | 'counter') => Promise<void>;
   onWorkoutEnd: () => Promise<void>;
   currentWorkoutId: string | null;
+  onRoundLengthChange: (val: number) => void;   // new
+  onRestLengthChange: (val: number) => void;    // new
 }
 
 // Combo libraries
@@ -23,6 +25,8 @@ export default function Timer({
   onWorkoutStart,
   onWorkoutEnd,
   currentWorkoutId,
+  onRoundLengthChange,
+  onRestLengthChange
 }: TimerProps) {
   // --- Core state ---
   const [phase, setPhase] = useState<'idle' | 'round' | 'rest' | 'paused'>('idle');
@@ -366,6 +370,39 @@ export default function Timer({
               <span className="text-sm text-gray-300 w-12">{maxDelay}</span>
             </div>
           </div>
+          {/* Round Length */}
+<div>
+  <label className="text-xs font-semibold text-gray-400 uppercase">Round Length (s)</label>
+  <div className="flex items-center gap-2">
+    <input
+      type="range"
+      min="10"
+      max="300"
+      step="5"
+      value={roundLength}
+      onChange={(e) => onRoundLengthChange(Number(e.target.value))}
+      className="flex-1"
+    />
+    <span className="text-sm text-gray-300 w-12">{roundLength}s</span>
+  </div>
+</div>
+
+{/* Rest Length */}
+<div>
+  <label className="text-xs font-semibold text-gray-400 uppercase">Rest Length (s)</label>
+  <div className="flex items-center gap-2">
+    <input
+      type="range"
+      min="5"
+      max="120"
+      step="5"
+      value={restLength}
+      onChange={(e) => onRestLengthChange(Number(e.target.value))}
+      className="flex-1"
+    />
+    <span className="text-sm text-gray-300 w-12">{restLength}s</span>
+  </div>
+</div>
         </div>
       </div>
 
