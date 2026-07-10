@@ -47,3 +47,17 @@ export async function getWorkoutStats() {
     .order('started_at', { ascending: false });
   return { data, error };
 }
+
+export async function incrementCalloutCount(roundId: string) {
+  const { data, error } = await supabase
+    .from('workout_rounds')
+    .select('callout_count')
+    .eq('id', roundId)
+    .single();
+  if (error) return;
+  const current = data?.callout_count || 0;
+  await supabase
+    .from('workout_rounds')
+    .update({ callout_count: current + 1 })
+    .eq('id', roundId);
+}
