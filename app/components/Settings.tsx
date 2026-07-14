@@ -5,11 +5,6 @@ import { useSettings } from '@/contexts/SettingsContext';
 
 // Voice filter – keep natural voices, exclude robotic ones
 const isGoodVoice = (name: string): boolean => {
-  const keepPatterns = [
-    'Google', 'Samantha', 'Zira', 'David', 'Daniel', 'Mark', 'Paul',
-    'George', 'Andrew', 'Susan', 'Kate', 'Emma', 'Julie', 'Alice',
-    'Microsoft', 'Natural', 'Premium'
-  ];
   const badPatterns = [
     'Albert', 'Bad News', 'Whisper', 'Trinoids', 'Robot', 'Rishi',
     'Tessa', 'Zarvox', 'Fred', 'Junior', 'Ava', 'Alva', 'Milena',
@@ -18,10 +13,7 @@ const isGoodVoice = (name: string): boolean => {
     'Enrique', 'Conchita', 'Diego', 'Isabela', 'Javier', 'Lucas',
     'Cellos', 'Trinoids', 'Whisper'
   ];
-  const isKeep = keepPatterns.some(p => name.includes(p));
-  const isBad = badPatterns.some(p => name.includes(p));
-  // Keep if any keepPattern matches, but exclude bad ones
-  return isKeep && !isBad;
+  return !badPatterns.some(p => name.includes(p));
 };
 
 export default function Settings() {

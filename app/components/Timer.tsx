@@ -15,36 +15,25 @@ interface TimerProps {
   selectedVoiceName: string;
   genderFilter: 'all' | 'male' | 'female';
   callouts: CalloutType[];
-  onWorkoutStart: (intensity: 'pressure' | 'counter') => Promise<void>;
+  onWorkoutStart: (intensity: 'pressure' | 'counter') => Promise<string>; // returns workout ID
   onWorkoutEnd: () => Promise<void>;
   currentWorkoutId: string | null;
 }
 
-// Filter for natural voices – keep these, drop the rest
 const isGoodVoice = (name: string): boolean => {
-  const keepPatterns = [
-    'Google', 'Samantha', 'Zira', 'David', 'Daniel', 'Mark', 'Paul',
-    'George', 'Andrew', 'Susan', 'Kate', 'Emma', 'Julie', 'Alice',
-    'Microsoft', 'Natural', 'Premium'
-  ];
   const badPatterns = [
     'Albert', 'Bad News', 'Whisper', 'Trinoids', 'Robot', 'Rishi',
     'Tessa', 'Zarvox', 'Fred', 'Junior', 'Ava', 'Alva', 'Milena',
     'Veena', 'Xander', 'Lea', 'Nicky', 'Nora', 'Sofia', 'Sergio',
     'Raquel', 'Fiona', 'Serena', 'Ricardo', 'Moira', 'Rosa',
     'Enrique', 'Conchita', 'Diego', 'Isabela', 'Javier', 'Lucas',
-    'Cellos', 'Trinoids', 'Whisper'
+    'Cellos', 'Whisper', 'Trinoids'
   ];
-  // Keep if any keepPattern matches, but exclude bad ones
-  const isKeep = keepPatterns.some(p => name.includes(p));
-  const isBad = badPatterns.some(p => name.includes(p));
-  return isKeep && !isBad;
+  return !badPatterns.some(p => name.includes(p));
 };
 
-// Combo pools (will be filtered by enabled callouts)
 const OFFENSIVE_PRESSURE = ['1', '2', '3', '4', '1-2', '3-4', '1-2-3', '2-3-2', '1-2-3-4', '1-2-3-2', '3-2-1', '4-3-2', '1-2-3-4-1', '2-3-2-4', '1-2-4', '3-2-4'];
 const OFFENSIVE_COUNTER = ['1-2', '3-4', '1-2-3', '2-3-2', '1-2-3-4', '3-2-1', '1-2-4', '2-3-4'];
-const DEFENSIVE_CUES = ['Slip left', 'Slip right', 'Roll right', 'Roll left', 'Block high', 'Block low', 'Pivot left', 'Pivot right', 'Step back', 'Angle out', 'Shoulder roll'];
 
 export default function Timer({
   roundLength,
@@ -59,7 +48,6 @@ export default function Timer({
   onWorkoutEnd,
   currentWorkoutId,
 }: TimerProps) {
-  // --- Core state ---
   const [phase, setPhase] = useState<'idle' | 'round' | 'rest' | 'paused'>('idle');
   const [elapsed, setElapsed] = useState(0);
   const [roundNumber, setRoundNumber] = useState(0);
@@ -69,19 +57,14 @@ export default function Timer({
   const [currentRoundId, setCurrentRoundId] = useState<string | null>(null);
   const [logs, setLogs] = useState<{ text: string; type: string; time: string }[]>([]);
 
-  // Refs to avoid stale closures
   const timerRef = useRef<NodeJS.Timeout | null>(null);
   const cadenceRef = useRef<NodeJS.Timeout | null>(null);
   const maxTimeRef = useRef(roundLength);
   const isActiveRef = useRef(false);
   const phaseRef = useRef(phase);
 
-  // Keep phaseRef in sync
-  useEffect(() => {
-    phaseRef.current = phase;
-  }, [phase]);
+  useEffect(() => { phaseRef.current = phase; }, [phase]);
 
-  // --- Wake Lock ---
   const { requestWakeLock, releaseWakeLock } = useWakeLock();
 
   // --- Voice handling ---
@@ -103,18 +86,15 @@ export default function Timer({
       } else if (genderFilter === 'female') {
         enVoices = enVoices.filter(v => /female|samantha|zira|susan|kate|emma|julie|alice/i.test(v.name));
       }
-      // Filter out weird voices
       enVoices = enVoices.filter(v => isGoodVoice(v.name));
       setVoices(enVoices);
       const found = selectedVoiceName ? enVoices.find(v => v.name === selectedVoiceName) : null;
-      const voice = found || enVoices[0] || null;
-      setSelectedVoice(voice);
+      setSelectedVoice(found || enVoices[0] || null);
     };
     loadVoices();
     window.speechSynthesis.onvoiceschanged = loadVoices;
   }, [genderFilter, selectedVoiceName]);
 
-  // --- Speech initialization ---
   const initializeSpeech = useCallback(() => {
     if (!window.speechSynthesis) return;
     window.speechSynthesis.getVoices();
@@ -123,7 +103,6 @@ export default function Timer({
     window.speechSynthesis.speak(silent);
   }, []);
 
-  // --- Speak ---
   const speak = useCallback((text: string) => {
     if (!window.speechSynthesis) return;
     window.speechSynthesis.cancel();
@@ -137,7 +116,6 @@ export default function Timer({
     window.speechSynthesis.speak(utterance);
   }, [intensity, selectedVoice]);
 
-  // --- Generate callout ---
   const generateCallout = useCallback(() => {
     const isPressure = intensity === 'pressure';
     const offenseRatio = isPressure ? 0.85 : 0.50;
@@ -170,11 +148,9 @@ export default function Timer({
     return { text, type };
   }, [intensity, callouts]);
 
-  // --- Schedule cadence (recursive) ---
   const scheduleCadence = useCallback(() => {
     if (!isActiveRef.current) return;
     if (cadenceRef.current) clearTimeout(cadenceRef.current);
-
     const delay = Math.floor(Math.random() * (maxDelay - minDelay + 1)) + minDelay;
     cadenceRef.current = setTimeout(() => {
       if (!isActiveRef.current) return;
@@ -182,8 +158,7 @@ export default function Timer({
       setCalloutText(callout.text);
       setCalloutType(callout.type);
       speak(callout.text);
-
-      // Save to DB if workout active
+      // Save to DB – use currentRoundId and currentWorkoutId (from props)
       if (currentWorkoutId && currentRoundId) {
         saveCallout({
           workout_id: currentWorkoutId,
@@ -193,27 +168,20 @@ export default function Timer({
         });
         incrementCalloutCount(currentRoundId);
       }
-
-      // Add to log
       const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
       setLogs(prev => [{ text: callout.text, type: callout.type, time }, ...prev].slice(0, 50));
-
-      // Schedule next
       scheduleCadence();
     }, delay);
   }, [minDelay, maxDelay, generateCallout, speak, currentWorkoutId, currentRoundId]);
 
-  // --- Timer tick (uses refs for phase) ---
   const tick = useCallback(() => {
     setElapsed(prev => {
       const newElapsed = prev + 1;
       const newRemaining = Math.max(0, maxTimeRef.current - newElapsed);
       setRemaining(newRemaining);
-
       if (newElapsed >= maxTimeRef.current) {
         const currentPhase = phaseRef.current;
         if (currentPhase === 'round') {
-          // Round complete → rest
           setPhase('rest');
           maxTimeRef.current = restLength;
           setElapsed(0);
@@ -227,7 +195,6 @@ export default function Timer({
           releaseWakeLock();
           return 0;
         } else if (currentPhase === 'rest') {
-          // Rest complete → next round
           const nextRound = roundNumber + 1;
           setRoundNumber(nextRound);
           setPhase('round');
@@ -255,14 +222,16 @@ export default function Timer({
     });
   }, [roundLength, restLength, roundNumber, currentWorkoutId, scheduleCadence, requestWakeLock, releaseWakeLock]);
 
-  // --- Start / Pause / Reset ---
   const startTimer = useCallback(async () => {
+    console.log('[Timer] startTimer called, phase:', phase);
     initializeSpeech();
 
     if (phase === 'idle') {
-      await onWorkoutStart(intensity);
-      if (!currentWorkoutId) {
-        console.error('Workout ID not set');
+      console.log('[Timer] Starting new workout...');
+      const workoutId = await onWorkoutStart(intensity);
+      console.log('[Timer] Workout ID returned:', workoutId);
+      if (!workoutId) {
+        console.error('[Timer] No workout ID returned');
         return;
       }
       setRoundNumber(1);
@@ -274,27 +243,32 @@ export default function Timer({
       requestWakeLock();
 
       const { data } = await saveRound({
-        workout_id: currentWorkoutId,
+        workout_id: workoutId,
         round_number: 1,
         round_type: 'round',
         duration: roundLength,
         callout_count: 0,
       });
-      if (data) setCurrentRoundId(data.id);
+      if (data) {
+        setCurrentRoundId(data.id);
+        console.log('[Timer] Round 1 ID created:', data.id);
+      }
 
       timerRef.current = setInterval(tick, 1000);
       scheduleCadence();
     } else if (phase === 'paused') {
+      console.log('[Timer] Resuming from pause');
       setPhase('round');
       isActiveRef.current = true;
       requestWakeLock();
       timerRef.current = setInterval(tick, 1000);
       scheduleCadence();
     }
-  }, [phase, roundLength, intensity, tick, scheduleCadence, currentWorkoutId, onWorkoutStart, initializeSpeech, requestWakeLock]);
+  }, [phase, roundLength, intensity, tick, scheduleCadence, onWorkoutStart, initializeSpeech, requestWakeLock]);
 
   const pauseTimer = useCallback(() => {
     if (phase === 'round' || phase === 'rest') {
+      console.log('[Timer] Pausing');
       setPhase('paused');
       isActiveRef.current = false;
       if (timerRef.current) clearInterval(timerRef.current);
@@ -305,6 +279,7 @@ export default function Timer({
   }, [phase, releaseWakeLock]);
 
   const resetTimer = useCallback(async () => {
+    console.log('[Timer] Resetting');
     if (timerRef.current) clearInterval(timerRef.current);
     if (cadenceRef.current) clearTimeout(cadenceRef.current);
     if (window.speechSynthesis) window.speechSynthesis.cancel();
@@ -323,7 +298,6 @@ export default function Timer({
     }
   }, [roundLength, currentWorkoutId, onWorkoutEnd, releaseWakeLock]);
 
-  // Cleanup
   useEffect(() => {
     return () => {
       if (timerRef.current) clearInterval(timerRef.current);
@@ -333,13 +307,11 @@ export default function Timer({
     };
   }, [releaseWakeLock]);
 
-  // --- UI ---
   const isStartDisabled = phase === 'round' || phase === 'rest';
   const isPauseDisabled = phase === 'idle' || phase === 'paused';
 
   return (
     <div className="max-w-2xl mx-auto p-4">
-      {/* Timer display */}
       <div className="text-center mb-4">
         <div className={`text-7xl font-bold font-mono ${phase === 'round' ? 'text-red-400' : phase === 'rest' ? 'text-blue-400' : 'text-gray-300'}`}>
           {Math.floor(remaining / 60)}:{(remaining % 60).toString().padStart(2, '0')}
@@ -352,7 +324,6 @@ export default function Timer({
         </div>
       </div>
 
-      {/* Callout box */}
       <div className="bg-gray-800 rounded-2xl p-6 mb-4 min-h-24 flex items-center justify-center border border-gray-700">
         <div className="text-2xl font-semibold text-center">
           {calloutText}
@@ -369,7 +340,6 @@ export default function Timer({
         </div>
       </div>
 
-      {/* Controls */}
       <div className="flex gap-3 justify-center mb-6">
         <button
           onClick={startTimer}
@@ -393,7 +363,6 @@ export default function Timer({
         </button>
       </div>
 
-      {/* Log */}
       <div className="bg-gray-800 rounded-xl p-4 border border-gray-700">
         <div className="flex justify-between items-center mb-2">
           <h3 className="text-sm font-semibold text-gray-400 uppercase">Callout Log</h3>

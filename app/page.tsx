@@ -36,26 +36,28 @@ function Dashboard() {
 
   if (!user) return <AuthScreen />;
 
-  const handleWorkoutStart = async (intensity: 'pressure' | 'counter') => {
-    const { data, error } = await supabase
-      .from('workouts')
-      .insert([{
-        user_id: user.id,
-        started_at: new Date().toISOString(),
-        intensity,
-      }])
-      .select()
-      .single();
+const handleWorkoutStart = async (intensity: 'pressure' | 'counter') => {
+  const { data, error } = await supabase
+    .from('workouts')
+    .insert([{
+      user_id: user.id,
+      started_at: new Date().toISOString(),
+      intensity,
+    }])
+    .select()
+    .single();
 
-    if (error) {
-      console.error('Failed to start workout:', error);
-      throw error;
-    }
-    if (data) {
-      setCurrentWorkoutId(data.id);
-      return data.id;
-    }
-  };
+  if (error) {
+    console.error('Failed to start workout:', error);
+    throw error;
+  }
+  if (data) {
+    console.log('[Page] Workout created with ID:', data.id);
+    setCurrentWorkoutId(data.id);
+    return data.id;
+  }
+    throw new Error('No data returned');
+};
 
   const handleWorkoutEnd = async () => {
     if (currentWorkoutId) {
