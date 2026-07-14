@@ -127,7 +127,7 @@ const generateCallout = useCallback(() => {
   const enabledDefenseIds = callouts.filter(c => c.enabled && c.category === 'defense').map(c => c.id);
   const enabledGroundIds = callouts.filter(c => c.enabled && c.category === 'ground').map(c => c.id);
 
-  // Build full combo pools (these are real combinations like "1-2", "2-3-2")
+  // Build full combo pools (real combinations like "1-2", "2-3-2")
   const comboPool = isPressure ? OFFENSIVE_PRESSURE : OFFENSIVE_COUNTER;
 
   // Filter combos: keep only those where every punch is enabled
@@ -143,17 +143,29 @@ const generateCallout = useCallback(() => {
   const defensePool = enabledDefenseIds.length > 0 ? enabledDefenseIds : ['Slip left'];
   const groundPool = enabledGroundIds.length > 0 ? enabledGroundIds : ['Shrimp'];
 
+  // Helper: randomly reverse a combo string (e.g., "1-2-3" → "3-2-1")
+  const maybeReverseCombo = (combo: string): string => {
+    // 40% chance to reverse
+    if (Math.random() < 0.4) {
+      const parts = combo.split('-');
+      return parts.reverse().join('-');
+    }
+    return combo;
+  };
+
   let text: string, type: 'offense' | 'defense' | 'mixed' | 'ground';
 
   if (roll < offenseRatio) {
     // Offense or mixed
     const combo = offensePool[Math.floor(Math.random() * offensePool.length)];
-    text = combo;
+    const reversedCombo = maybeReverseCombo(combo);
     type = 'offense';
+    text = reversedCombo;
+
     // In counter mode, sometimes add a defensive cue after the combo
     if (!isPressure && Math.random() < 0.25 && defensePool.length > 0) {
       const def = defensePool[Math.floor(Math.random() * defensePool.length)];
-      text = `${combo} → ${def}`;
+      text = `${reversedCombo} → ${def}`;
       type = 'mixed';
     }
   } else {
