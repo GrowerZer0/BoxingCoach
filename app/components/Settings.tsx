@@ -3,6 +3,27 @@
 import { useState, useEffect } from 'react';
 import { useSettings } from '@/contexts/SettingsContext';
 
+// Voice filter – keep natural voices, exclude robotic ones
+const isGoodVoice = (name: string): boolean => {
+  const keepPatterns = [
+    'Google', 'Samantha', 'Zira', 'David', 'Daniel', 'Mark', 'Paul',
+    'George', 'Andrew', 'Susan', 'Kate', 'Emma', 'Julie', 'Alice',
+    'Microsoft', 'Natural', 'Premium'
+  ];
+  const badPatterns = [
+    'Albert', 'Bad News', 'Whisper', 'Trinoids', 'Robot', 'Rishi',
+    'Tessa', 'Zarvox', 'Fred', 'Junior', 'Ava', 'Alva', 'Milena',
+    'Veena', 'Xander', 'Lea', 'Nicky', 'Nora', 'Sofia', 'Sergio',
+    'Raquel', 'Fiona', 'Serena', 'Ricardo', 'Moira', 'Rosa',
+    'Enrique', 'Conchita', 'Diego', 'Isabela', 'Javier', 'Lucas',
+    'Cellos', 'Trinoids', 'Whisper'
+  ];
+  const isKeep = keepPatterns.some(p => name.includes(p));
+  const isBad = badPatterns.some(p => name.includes(p));
+  // Keep if any keepPattern matches, but exclude bad ones
+  return isKeep && !isBad;
+};
+
 export default function Settings() {
   const {
     roundLength,
@@ -36,17 +57,34 @@ export default function Settings() {
         return;
       }
       let enVoices = allVoices.filter(v => v.lang.startsWith('en'));
-      // Apply gender filter (re‑use the same filter logic)
+      // Apply gender filter
       if (genderFilter === 'male') {
         enVoices = enVoices.filter(v => /male|david|daniel|mark|paul|george|andrew/i.test(v.name));
       } else if (genderFilter === 'female') {
         enVoices = enVoices.filter(v => /female|samantha|zira|susan|kate|emma|julie|alice/i.test(v.name));
       }
+      // Apply "good voice" filter (same as Timer.tsx)
+      enVoices = enVoices.filter(v => isGoodVoice(v.name));
       setVoices(enVoices);
     };
     loadVoices();
     window.speechSynthesis.onvoiceschanged = loadVoices;
   }, [genderFilter]);
+
+  // --- Speak function (used for test voice) ---
+  const speakTest = () => {
+    if (!window.speechSynthesis) return;
+    window.speechSynthesis.cancel();
+    const text = 'Hello, let\'s train!';
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.lang = 'en-US';
+    utterance.rate = 0.95;
+    utterance.pitch = 1.0;
+    utterance.volume = 1.0;
+    const voice = voices.find(v => v.name === selectedVoiceName);
+    if (voice) utterance.voice = voice;
+    window.speechSynthesis.speak(utterance);
+  };
 
   // --- UI ---
   return (
@@ -132,21 +170,29 @@ export default function Settings() {
           />
         </div>
 
-        {/* Voice selection – dropdown */}
+        {/* Voice selection */}
         <div>
           <label className="block text-sm font-medium text-gray-300">Voice</label>
-          <select
-            className="w-full p-2 bg-gray-700 border border-gray-600 rounded text-white"
-            value={selectedVoiceName || ''}
-            onChange={(e) => setSelectedVoiceName(e.target.value)}
-          >
-            {voices.map((v) => (
-              <option key={v.name} value={v.name}>
-                {v.name} ({v.lang})
-              </option>
-            ))}
-          </select>
-          <p className="text-xs text-gray-400 mt-1">Select a voice from your system.</p>
+          <div className="flex gap-2">
+            <select
+              className="flex-1 p-2 bg-gray-700 border border-gray-600 rounded text-white"
+              value={selectedVoiceName || ''}
+              onChange={(e) => setSelectedVoiceName(e.target.value)}
+            >
+              {voices.map((v) => (
+                <option key={v.name} value={v.name}>
+                  {v.name} ({v.lang})
+                </option>
+              ))}
+            </select>
+            <button
+              onClick={speakTest}
+              className="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded text-sm font-semibold"
+            >
+              🔊 Test
+            </button>
+          </div>
+          <p className="text-xs text-gray-400 mt-1">Select a natural‑sounding voice.</p>
         </div>
 
         {/* Gender filter */}
@@ -185,12 +231,9 @@ export default function Settings() {
           </div>
         </div>
 
-        {/* Optional Save button – settings auto‑save, but gives feedback */}
+        {/* Save button (auto‑saves but gives feedback) */}
         <button
-          onClick={() => {
-            // Settings are already saved via context useEffect, but we can show a toast.
-            alert('Settings saved!');
-          }}
+          onClick={() => alert('Settings saved!')}
           className="w-full py-2 bg-yellow-500 hover:bg-yellow-600 text-gray-900 font-semibold rounded"
         >
           💾 Save Settings

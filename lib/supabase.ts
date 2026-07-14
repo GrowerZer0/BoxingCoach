@@ -37,6 +37,6 @@ export type CalloutLog = {
   workout_id: string;
   round_id: string;
   callout_text: string;
-  callout_type: 'offense' | 'defense' | 'mixed';
+  callout_type: 'offense' | 'defense' | 'mixed' | 'ground' | 'other';
   timestamp: string;
 };

@@ -20,7 +20,28 @@ interface TimerProps {
   currentWorkoutId: string | null;
 }
 
-// Combo libraries – will be filtered by enabled callouts
+// Filter for natural voices – keep these, drop the rest
+const isGoodVoice = (name: string): boolean => {
+  const keepPatterns = [
+    'Google', 'Samantha', 'Zira', 'David', 'Daniel', 'Mark', 'Paul',
+    'George', 'Andrew', 'Susan', 'Kate', 'Emma', 'Julie', 'Alice',
+    'Microsoft', 'Natural', 'Premium'
+  ];
+  const badPatterns = [
+    'Albert', 'Bad News', 'Whisper', 'Trinoids', 'Robot', 'Rishi',
+    'Tessa', 'Zarvox', 'Fred', 'Junior', 'Ava', 'Alva', 'Milena',
+    'Veena', 'Xander', 'Lea', 'Nicky', 'Nora', 'Sofia', 'Sergio',
+    'Raquel', 'Fiona', 'Serena', 'Ricardo', 'Moira', 'Rosa',
+    'Enrique', 'Conchita', 'Diego', 'Isabela', 'Javier', 'Lucas',
+    'Cellos', 'Trinoids', 'Whisper'
+  ];
+  // Keep if any keepPattern matches, but exclude bad ones
+  const isKeep = keepPatterns.some(p => name.includes(p));
+  const isBad = badPatterns.some(p => name.includes(p));
+  return isKeep && !isBad;
+};
+
+// Combo pools (will be filtered by enabled callouts)
 const OFFENSIVE_PRESSURE = ['1', '2', '3', '4', '1-2', '3-4', '1-2-3', '2-3-2', '1-2-3-4', '1-2-3-2', '3-2-1', '4-3-2', '1-2-3-4-1', '2-3-2-4', '1-2-4', '3-2-4'];
 const OFFENSIVE_COUNTER = ['1-2', '3-4', '1-2-3', '2-3-2', '1-2-3-4', '3-2-1', '1-2-4', '2-3-4'];
 const DEFENSIVE_CUES = ['Slip left', 'Slip right', 'Roll right', 'Roll left', 'Block high', 'Block low', 'Pivot left', 'Pivot right', 'Step back', 'Angle out', 'Shoulder roll'];
@@ -47,15 +68,23 @@ export default function Timer({
   const [calloutType, setCalloutType] = useState<'offense' | 'defense' | 'mixed' | 'ground' | null>(null);
   const [currentRoundId, setCurrentRoundId] = useState<string | null>(null);
   const [logs, setLogs] = useState<{ text: string; type: string; time: string }[]>([]);
+
+  // Refs to avoid stale closures
   const timerRef = useRef<NodeJS.Timeout | null>(null);
   const cadenceRef = useRef<NodeJS.Timeout | null>(null);
   const maxTimeRef = useRef(roundLength);
   const isActiveRef = useRef(false);
+  const phaseRef = useRef(phase);
+
+  // Keep phaseRef in sync
+  useEffect(() => {
+    phaseRef.current = phase;
+  }, [phase]);
 
   // --- Wake Lock ---
   const { requestWakeLock, releaseWakeLock } = useWakeLock();
 
-  // --- Voice handling (uses selectedVoiceName and genderFilter from props) ---
+  // --- Voice handling ---
   const [voices, setVoices] = useState<SpeechSynthesisVoice[]>([]);
   const [selectedVoice, setSelectedVoice] = useState<SpeechSynthesisVoice | null>(null);
 
@@ -74,15 +103,18 @@ export default function Timer({
       } else if (genderFilter === 'female') {
         enVoices = enVoices.filter(v => /female|samantha|zira|susan|kate|emma|julie|alice/i.test(v.name));
       }
+      // Filter out weird voices
+      enVoices = enVoices.filter(v => isGoodVoice(v.name));
       setVoices(enVoices);
       const found = selectedVoiceName ? enVoices.find(v => v.name === selectedVoiceName) : null;
-      setSelectedVoice(found || enVoices[0] || null);
+      const voice = found || enVoices[0] || null;
+      setSelectedVoice(voice);
     };
     loadVoices();
     window.speechSynthesis.onvoiceschanged = loadVoices;
   }, [genderFilter, selectedVoiceName]);
 
-  // --- Speech initialization (for iOS) ---
+  // --- Speech initialization ---
   const initializeSpeech = useCallback(() => {
     if (!window.speechSynthesis) return;
     window.speechSynthesis.getVoices();
@@ -105,78 +137,83 @@ export default function Timer({
     window.speechSynthesis.speak(utterance);
   }, [intensity, selectedVoice]);
 
-  // --- Generate callout based on enabled callouts from props ---
+  // --- Generate callout ---
   const generateCallout = useCallback(() => {
     const isPressure = intensity === 'pressure';
     const offenseRatio = isPressure ? 0.85 : 0.50;
     const roll = Math.random();
 
-    // Filter enabled callouts by category
     const enabledOffense = callouts.filter(c => c.enabled && c.category === 'offense').map(c => c.id);
     const enabledDefense = callouts.filter(c => c.enabled && c.category === 'defense').map(c => c.id);
     const enabledGround = callouts.filter(c => c.enabled && c.category === 'ground').map(c => c.id);
 
-    // Build pools from enabled IDs or fallback to defaults
     const offensePool = enabledOffense.length > 0 ? enabledOffense : ['1', '2'];
     const defensePool = enabledDefense.length > 0 ? enabledDefense : ['Slip left'];
     const groundPool = enabledGround.length > 0 ? enabledGround : ['Shrimp'];
 
+    let text: string, type: 'offense' | 'defense' | 'mixed' | 'ground';
     if (roll < offenseRatio) {
       const combo = offensePool[Math.floor(Math.random() * offensePool.length)];
-      let text = combo;
-      let type: 'offense' | 'mixed' = 'offense';
+      text = combo;
+      type = 'offense';
       if (!isPressure && Math.random() < 0.25 && defensePool.length > 0) {
         const def = defensePool[Math.floor(Math.random() * defensePool.length)];
         text = `${combo} → ${def}`;
         type = 'mixed';
       }
-      return { text, type };
     } else {
-      // 30% chance of ground if available
       const isGround = Math.random() < 0.3 && groundPool.length > 0;
       const pool = isGround ? groundPool : defensePool;
-      const text = pool[Math.floor(Math.random() * pool.length)];
-      const type = isGround ? 'ground' : 'defense';
-      return { text, type };
+      text = pool[Math.floor(Math.random() * pool.length)];
+      type = isGround ? 'ground' : 'defense';
     }
+    return { text, type };
   }, [intensity, callouts]);
 
-  // --- Schedule cadence using minDelay/maxDelay from props ---
+  // --- Schedule cadence (recursive) ---
   const scheduleCadence = useCallback(() => {
     if (!isActiveRef.current) return;
     if (cadenceRef.current) clearTimeout(cadenceRef.current);
+
     const delay = Math.floor(Math.random() * (maxDelay - minDelay + 1)) + minDelay;
     cadenceRef.current = setTimeout(() => {
       if (!isActiveRef.current) return;
       const callout = generateCallout();
       setCalloutText(callout.text);
-      setCalloutType(callout.type as any);
+      setCalloutType(callout.type);
       speak(callout.text);
 
+      // Save to DB if workout active
       if (currentWorkoutId && currentRoundId) {
         saveCallout({
           workout_id: currentWorkoutId,
           round_id: currentRoundId,
           callout_text: callout.text,
-          callout_type: callout.type as any,
+          callout_type: callout.type,
         });
         incrementCalloutCount(currentRoundId);
       }
 
+      // Add to log
       const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
       setLogs(prev => [{ text: callout.text, type: callout.type, time }, ...prev].slice(0, 50));
+
+      // Schedule next
       scheduleCadence();
     }, delay);
   }, [minDelay, maxDelay, generateCallout, speak, currentWorkoutId, currentRoundId]);
 
-  // --- Timer tick ---
+  // --- Timer tick (uses refs for phase) ---
   const tick = useCallback(() => {
     setElapsed(prev => {
       const newElapsed = prev + 1;
       const newRemaining = Math.max(0, maxTimeRef.current - newElapsed);
       setRemaining(newRemaining);
+
       if (newElapsed >= maxTimeRef.current) {
-        if (phase === 'round') {
+        const currentPhase = phaseRef.current;
+        if (currentPhase === 'round') {
+          // Round complete → rest
           setPhase('rest');
           maxTimeRef.current = restLength;
           setElapsed(0);
@@ -189,7 +226,8 @@ export default function Timer({
             .eq('id', currentWorkoutId);
           releaseWakeLock();
           return 0;
-        } else if (phase === 'rest') {
+        } else if (currentPhase === 'rest') {
+          // Rest complete → next round
           const nextRound = roundNumber + 1;
           setRoundNumber(nextRound);
           setPhase('round');
@@ -215,16 +253,16 @@ export default function Timer({
       }
       return newElapsed;
     });
-  }, [phase, roundLength, restLength, roundNumber, currentWorkoutId, scheduleCadence, requestWakeLock, releaseWakeLock]);
+  }, [roundLength, restLength, roundNumber, currentWorkoutId, scheduleCadence, requestWakeLock, releaseWakeLock]);
 
   // --- Start / Pause / Reset ---
   const startTimer = useCallback(async () => {
     initializeSpeech();
+
     if (phase === 'idle') {
       await onWorkoutStart(intensity);
-      console.log('Workout ID after start:', currentWorkoutId);
       if (!currentWorkoutId) {
-        console.error('Workout ID not set after start');
+        console.error('Workout ID not set');
         return;
       }
       setRoundNumber(1);
@@ -251,6 +289,7 @@ export default function Timer({
       isActiveRef.current = true;
       requestWakeLock();
       timerRef.current = setInterval(tick, 1000);
+      scheduleCadence();
     }
   }, [phase, roundLength, intensity, tick, scheduleCadence, currentWorkoutId, onWorkoutStart, initializeSpeech, requestWakeLock]);
 
@@ -294,7 +333,10 @@ export default function Timer({
     };
   }, [releaseWakeLock]);
 
-  // --- UI (only timer, callout, controls, log) ---
+  // --- UI ---
+  const isStartDisabled = phase === 'round' || phase === 'rest';
+  const isPauseDisabled = phase === 'idle' || phase === 'paused';
+
   return (
     <div className="max-w-2xl mx-auto p-4">
       {/* Timer display */}
@@ -318,6 +360,7 @@ export default function Timer({
             <span className={`ml-3 text-xs font-bold uppercase px-2 py-1 rounded-full ${
               calloutType === 'defense' ? 'bg-blue-500/20 text-blue-300' :
               calloutType === 'offense' ? 'bg-red-500/20 text-red-300' :
+              calloutType === 'ground' ? 'bg-green-500/20 text-green-300' :
               'bg-purple-500/20 text-purple-300'
             }`}>
               {calloutType}
@@ -330,14 +373,14 @@ export default function Timer({
       <div className="flex gap-3 justify-center mb-6">
         <button
           onClick={startTimer}
-          disabled={phase === 'round' || phase === 'rest'}
+          disabled={isStartDisabled}
           className="px-6 py-2 bg-yellow-500 hover:bg-yellow-600 text-gray-900 font-semibold rounded-full disabled:opacity-50"
         >
           {phase === 'idle' ? '▶ Start' : phase === 'paused' ? '▶ Resume' : '▶ Start'}
         </button>
         <button
           onClick={pauseTimer}
-          disabled={phase === 'idle' || phase === 'paused'}
+          disabled={isPauseDisabled}
           className="px-6 py-2 bg-gray-600 hover:bg-gray-500 text-white font-semibold rounded-full disabled:opacity-50"
         >
           ⏸ Pause
@@ -362,9 +405,10 @@ export default function Timer({
               <span className={`${
                 log.type === 'defense' ? 'text-blue-300' :
                 log.type === 'offense' ? 'text-red-300' :
+                log.type === 'ground' ? 'text-green-300' :
                 'text-purple-300'
               }`}>
-                {log.type === 'defense' ? '🛡' : log.type === 'offense' ? '🥊' : '⚡'} {log.text}
+                {log.type === 'defense' ? '🛡' : log.type === 'offense' ? '🥊' : log.type === 'ground' ? '🤼' : '⚡'} {log.text}
               </span>
               <span className="text-gray-500 text-xs">{log.time}</span>
             </div>
