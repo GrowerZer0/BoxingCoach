@@ -15,7 +15,7 @@ interface TimerProps {
   selectedVoiceName: string;
   genderFilter: 'all' | 'male' | 'female';
   callouts: CalloutType[];
-  onWorkoutStart: (intensity: 'pressure' | 'counter') => Promise<string>; // returns workout ID
+  onWorkoutStart: (intensity: 'pressure' | 'counter') => Promise<string>;
   onWorkoutEnd: () => Promise<void>;
   currentWorkoutId: string | null;
 }
@@ -62,6 +62,7 @@ export default function Timer({
   const maxTimeRef = useRef(roundLength);
   const isActiveRef = useRef(false);
   const phaseRef = useRef(phase);
+  const tickRef = useRef<() => void>(() => {});
 
   useEffect(() => { phaseRef.current = phase; }, [phase]);
 
@@ -116,37 +117,55 @@ export default function Timer({
     window.speechSynthesis.speak(utterance);
   }, [intensity, selectedVoice]);
 
-  const generateCallout = useCallback(() => {
-    const isPressure = intensity === 'pressure';
-    const offenseRatio = isPressure ? 0.85 : 0.50;
-    const roll = Math.random();
+const generateCallout = useCallback(() => {
+  const isPressure = intensity === 'pressure';
+  const offenseRatio = isPressure ? 0.85 : 0.50;
+  const roll = Math.random();
 
-    const enabledOffense = callouts.filter(c => c.enabled && c.category === 'offense').map(c => c.id);
-    const enabledDefense = callouts.filter(c => c.enabled && c.category === 'defense').map(c => c.id);
-    const enabledGround = callouts.filter(c => c.enabled && c.category === 'ground').map(c => c.id);
+  // Get enabled IDs for each category
+  const enabledOffenseIds = callouts.filter(c => c.enabled && c.category === 'offense').map(c => c.id);
+  const enabledDefenseIds = callouts.filter(c => c.enabled && c.category === 'defense').map(c => c.id);
+  const enabledGroundIds = callouts.filter(c => c.enabled && c.category === 'ground').map(c => c.id);
 
-    const offensePool = enabledOffense.length > 0 ? enabledOffense : ['1', '2'];
-    const defensePool = enabledDefense.length > 0 ? enabledDefense : ['Slip left'];
-    const groundPool = enabledGround.length > 0 ? enabledGround : ['Shrimp'];
+  // Build full combo pools (these are real combinations like "1-2", "2-3-2")
+  const comboPool = isPressure ? OFFENSIVE_PRESSURE : OFFENSIVE_COUNTER;
 
-    let text: string, type: 'offense' | 'defense' | 'mixed' | 'ground';
-    if (roll < offenseRatio) {
-      const combo = offensePool[Math.floor(Math.random() * offensePool.length)];
-      text = combo;
-      type = 'offense';
-      if (!isPressure && Math.random() < 0.25 && defensePool.length > 0) {
-        const def = defensePool[Math.floor(Math.random() * defensePool.length)];
-        text = `${combo} → ${def}`;
-        type = 'mixed';
-      }
-    } else {
-      const isGround = Math.random() < 0.3 && groundPool.length > 0;
-      const pool = isGround ? groundPool : defensePool;
-      text = pool[Math.floor(Math.random() * pool.length)];
-      type = isGround ? 'ground' : 'defense';
+  // Filter combos: keep only those where every punch is enabled
+  const validCombos = comboPool.filter(combo => {
+    const parts = combo.split('-');
+    return parts.every(p => enabledOffenseIds.includes(p));
+  });
+
+  // If no valid combos, fallback to a single enabled punch (or just "1")
+  const offensePool = validCombos.length > 0 ? validCombos : (enabledOffenseIds.length > 0 ? enabledOffenseIds : ['1']);
+
+  // Defense & ground pools
+  const defensePool = enabledDefenseIds.length > 0 ? enabledDefenseIds : ['Slip left'];
+  const groundPool = enabledGroundIds.length > 0 ? enabledGroundIds : ['Shrimp'];
+
+  let text: string, type: 'offense' | 'defense' | 'mixed' | 'ground';
+
+  if (roll < offenseRatio) {
+    // Offense or mixed
+    const combo = offensePool[Math.floor(Math.random() * offensePool.length)];
+    text = combo;
+    type = 'offense';
+    // In counter mode, sometimes add a defensive cue after the combo
+    if (!isPressure && Math.random() < 0.25 && defensePool.length > 0) {
+      const def = defensePool[Math.floor(Math.random() * defensePool.length)];
+      text = `${combo} → ${def}`;
+      type = 'mixed';
     }
-    return { text, type };
-  }, [intensity, callouts]);
+  } else {
+    // Defense or ground
+    const isGround = Math.random() < 0.3 && groundPool.length > 0;
+    const pool = isGround ? groundPool : defensePool;
+    text = pool[Math.floor(Math.random() * pool.length)];
+    type = isGround ? 'ground' : 'defense';
+  }
+
+  return { text, type };
+}, [intensity, callouts]);
 
   const scheduleCadence = useCallback(() => {
     if (!isActiveRef.current) return;
@@ -158,7 +177,6 @@ export default function Timer({
       setCalloutText(callout.text);
       setCalloutType(callout.type);
       speak(callout.text);
-      // Save to DB – use currentRoundId and currentWorkoutId (from props)
       if (currentWorkoutId && currentRoundId) {
         saveCallout({
           workout_id: currentWorkoutId,
@@ -174,13 +192,16 @@ export default function Timer({
     }, delay);
   }, [minDelay, maxDelay, generateCallout, speak, currentWorkoutId, currentRoundId]);
 
+  // --- Tick function (updates elapsed and remaining) ---
   const tick = useCallback(() => {
+    console.log('[Timer] tick called, elapsed:', elapsed, 'remaining:', remaining);
     setElapsed(prev => {
       const newElapsed = prev + 1;
       const newRemaining = Math.max(0, maxTimeRef.current - newElapsed);
       setRemaining(newRemaining);
       if (newElapsed >= maxTimeRef.current) {
         const currentPhase = phaseRef.current;
+        console.log('[Timer] phase complete, currentPhase:', currentPhase);
         if (currentPhase === 'round') {
           setPhase('rest');
           maxTimeRef.current = restLength;
@@ -220,20 +241,35 @@ export default function Timer({
       }
       return newElapsed;
     });
-  }, [roundLength, restLength, roundNumber, currentWorkoutId, scheduleCadence, requestWakeLock, releaseWakeLock]);
+  }, [roundLength, restLength, roundNumber, currentWorkoutId, scheduleCadence, requestWakeLock, releaseWakeLock, elapsed, remaining]);
 
+  // Update tickRef whenever tick changes
+  useEffect(() => {
+    tickRef.current = tick;
+  }, [tick]);
+
+  // --- Start / Pause / Reset ---
   const startTimer = useCallback(async () => {
     console.log('[Timer] startTimer called, phase:', phase);
     initializeSpeech();
 
     if (phase === 'idle') {
       console.log('[Timer] Starting new workout...');
-      const workoutId = await onWorkoutStart(intensity);
-      console.log('[Timer] Workout ID returned:', workoutId);
+      let workoutId: string | null = null;
+      try {
+        workoutId = await onWorkoutStart(intensity);
+        console.log('[Timer] Workout ID returned:', workoutId);
+      } catch (error) {
+        console.error('[Timer] onWorkoutStart threw error:', error);
+        workoutId = 'fake-id-' + Date.now();
+        console.log('[Timer] Using fake ID:', workoutId);
+      }
+
       if (!workoutId) {
-        console.error('[Timer] No workout ID returned');
+        console.error('[Timer] No workout ID available');
         return;
       }
+
       setRoundNumber(1);
       setPhase('round');
       maxTimeRef.current = roundLength;
@@ -242,29 +278,45 @@ export default function Timer({
       isActiveRef.current = true;
       requestWakeLock();
 
-      const { data } = await saveRound({
-        workout_id: workoutId,
-        round_number: 1,
-        round_type: 'round',
-        duration: roundLength,
-        callout_count: 0,
-      });
-      if (data) {
-        setCurrentRoundId(data.id);
-        console.log('[Timer] Round 1 ID created:', data.id);
+      try {
+        const { data } = await saveRound({
+          workout_id: workoutId,
+          round_number: 1,
+          round_type: 'round',
+          duration: roundLength,
+          callout_count: 0,
+        });
+        if (data) {
+          setCurrentRoundId(data.id);
+          console.log('[Timer] Round 1 ID created:', data.id);
+        } else {
+          console.warn('[Timer] saveRound returned no data, using fake round id');
+          setCurrentRoundId('fake-round-' + Date.now());
+        }
+      } catch (error) {
+        console.error('[Timer] saveRound threw error:', error);
+        setCurrentRoundId('fake-round-' + Date.now());
       }
 
-      timerRef.current = setInterval(tick, 1000);
+      console.log('[Timer] Starting interval and cadence...');
+      // Use setInterval with the ref to the latest tick
+      timerRef.current = setInterval(() => {
+        console.log('🔥 INTERVAL TICK!');
+        tickRef.current();
+      }, 1000);
       scheduleCadence();
+      console.log('[Timer] Start completed');
     } else if (phase === 'paused') {
       console.log('[Timer] Resuming from pause');
       setPhase('round');
       isActiveRef.current = true;
       requestWakeLock();
-      timerRef.current = setInterval(tick, 1000);
+      timerRef.current = setInterval(() => {
+        tickRef.current();
+      }, 1000);
       scheduleCadence();
     }
-  }, [phase, roundLength, intensity, tick, scheduleCadence, onWorkoutStart, initializeSpeech, requestWakeLock]);
+  }, [phase, roundLength, intensity, scheduleCadence, onWorkoutStart, initializeSpeech, requestWakeLock]);
 
   const pauseTimer = useCallback(() => {
     if (phase === 'round' || phase === 'rest') {
@@ -305,7 +357,7 @@ export default function Timer({
       if (window.speechSynthesis) window.speechSynthesis.cancel();
       releaseWakeLock();
     };
-  }, [releaseWakeLock]);
+  }, []);
 
   const isStartDisabled = phase === 'round' || phase === 'rest';
   const isPauseDisabled = phase === 'idle' || phase === 'paused';
@@ -342,7 +394,10 @@ export default function Timer({
 
       <div className="flex gap-3 justify-center mb-6">
         <button
-          onClick={startTimer}
+          onClick={() => {
+            console.log('🔘 Start button clicked');
+            startTimer();
+          }}
           disabled={isStartDisabled}
           className="px-6 py-2 bg-yellow-500 hover:bg-yellow-600 text-gray-900 font-semibold rounded-full disabled:opacity-50"
         >
