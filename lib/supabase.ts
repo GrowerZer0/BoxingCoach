@@ -27,3 +27,5 @@ export const supabase = getSupabaseClient();
 export function isSupabaseReady() {
   return !!supabaseInstance;
 }
+
+export default { supabase, getSupabaseClient, isSupabaseReady };

@@ -37,14 +37,16 @@ export interface Database {
           started_at: string;
           ended_at: string | null;
           intensity: string;
+          total_rounds: number | null;
           created_at: string;
         };
         Insert: {
           id?: string;
           user_id: string;
-          started_at: string;
+          started_at?: string;
           ended_at?: string | null;
           intensity?: string;
+          total_rounds?: number | null;
           created_at?: string;
         };
         Update: {
@@ -53,6 +55,56 @@ export interface Database {
           started_at?: string;
           ended_at?: string | null;
           intensity?: string;
+          total_rounds?: number | null;
+          created_at?: string;
+        };
+      };
+      workout_rounds: {
+        Row: {
+          id: string;
+          workout_id: string;
+          round_number: number;
+          duration: number;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          workout_id: string;
+          round_number: number;
+          duration: number;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          workout_id?: string;
+          round_number?: number;
+          duration?: number;
+          created_at?: string;
+        };
+      };
+      callout_logs: {
+        Row: {
+          id: string;
+          round_id: string;
+          callout: string;
+          is_defensive: boolean;
+          timestamp: string;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          round_id: string;
+          callout: string;
+          is_defensive?: boolean;
+          timestamp?: string;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          round_id?: string;
+          callout?: string;
+          is_defensive?: boolean;
+          timestamp?: string;
           created_at?: string;
         };
       };
