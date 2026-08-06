@@ -1,126 +1,207 @@
+// contexts/SettingsContext.tsx
 'use client';
 
-import { createContext, useContext, useState, ReactNode, useEffect } from 'react';
+import React, { createContext, useContext, useState, useEffect } from 'react';
+import { getSupabaseClient } from '@/lib/supabase';
+import { useAuth } from '@/lib/auth';
 
-export type CalloutType = {
-  id: string;
-  label: string;
-  enabled: boolean;
-  category: 'offense' | 'defense' | 'ground';
-};
+// Get Supabase client
+const supabase = getSupabaseClient();
 
-const DEFAULT_CALLOUTS: CalloutType[] = [
-  // Offense
-  { id: '1', label: '1 (Jab)', enabled: true, category: 'offense' },
-  { id: '2', label: '2 (Cross)', enabled: true, category: 'offense' },
-  { id: '3', label: '3 (Hook)', enabled: true, category: 'offense' },
-  { id: '4', label: '4 (Uppercut)', enabled: true, category: 'offense' },
-  // Defense
-  { id: 'slip-left', label: 'Slip Left', enabled: true, category: 'defense' },
-  { id: 'slip-right', label: 'Slip Right', enabled: true, category: 'defense' },
-  { id: 'roll-left', label: 'Roll Left', enabled: true, category: 'defense' },
-  { id: 'roll-right', label: 'Roll Right', enabled: true, category: 'defense' },
-  { id: 'block-high', label: 'Block High', enabled: true, category: 'defense' },
-  { id: 'block-low', label: 'Block Low', enabled: true, category: 'defense' },
-  // Ground (new)
-  { id: 'shrimp', label: 'Shrimp (Escape)', enabled: false, category: 'ground' },
-  { id: 'bridge', label: 'Bridge', enabled: false, category: 'ground' },
-  { id: 'takedown-def', label: 'Takedown Defense', enabled: false, category: 'ground' },
+export interface RoundConfig {
+  roundNumber: number;
+  name: string;
+  combos: string[];
+  duration?: number;
+}
+
+export interface WorkoutSettings {
+  roundDuration: number;
+  restDuration: number;
+  rounds: number;
+  intensityId: string; // Must be 'pressure' or 'counter' to match database
+  roundConfigs: RoundConfig[];
+  enableAudio: boolean;
+  enableVoice: boolean;
+  showComboDisplay: boolean;
+  enableWakeLock: boolean;
+  countdownSeconds: number;
+}
+
+const DEFAULT_ROUND_CONFIGS: RoundConfig[] = [
+  { 
+    roundNumber: 1, 
+    name: 'Round 1 - Feeling Out', 
+    combos: ['Jab', 'Cross', 'Slip Right'],
+  },
+  { 
+    roundNumber: 2, 
+    name: 'Round 2 - Building Rhythm', 
+    combos: ['Jab-Cross', 'Left Hook', 'Roll Right', 'Cross'],
+  },
+  { 
+    roundNumber: 3, 
+    name: 'Round 3 - Pressure', 
+    combos: ['Jab-Cross-Hook', 'Slip Left-Cross', 'Roll Right-Jab-Cross'],
+  },
 ];
 
+const DEFAULT_SETTINGS: WorkoutSettings = {
+  roundDuration: 180,
+  restDuration: 60,
+  rounds: 3,
+  intensityId: 'counter', // Changed from 'moderate' to 'counter'
+  roundConfigs: DEFAULT_ROUND_CONFIGS,
+  enableAudio: true,
+  enableVoice: true,
+  showComboDisplay: true,
+  enableWakeLock: true,
+  countdownSeconds: 3,
+};
+
 interface SettingsContextType {
-  roundLength: number;
-  setRoundLength: (val: number) => void;
-  restLength: number;
-  setRestLength: (val: number) => void;
-  intensity: 'pressure' | 'counter';
-  setIntensity: (val: 'pressure' | 'counter') => void;
-  minDelay: number;
-  setMinDelay: (val: number) => void;
-  maxDelay: number;
-  setMaxDelay: (val: number) => void;
-  selectedVoiceName: string;
-  setSelectedVoiceName: (name: string) => void;
-  genderFilter: 'all' | 'male' | 'female';
-  setGenderFilter: (val: 'all' | 'male' | 'female') => void;
-  callouts: CalloutType[];
-  toggleCallout: (id: string) => void;
-  // recipes will be added later
+  settings: WorkoutSettings;
+  updateSettings: (newSettings: Partial<WorkoutSettings>) => Promise<void>;
+  updateRoundConfig: (roundNumber: number, config: Partial<RoundConfig>) => Promise<void>;
+  addRoundConfig: (config: RoundConfig) => Promise<void>;
+  removeRoundConfig: (roundNumber: number) => Promise<void>;
+  saveToSupabase: () => Promise<void>;
+  loadFromSupabase: () => Promise<void>;
 }
 
 const SettingsContext = createContext<SettingsContextType | undefined>(undefined);
 
-const STORAGE_KEY = 'boxing_settings';
+export function SettingsProvider({ children }: { children: React.ReactNode }) {
+  const { user } = useAuth();
+  const [settings, setSettings] = useState<WorkoutSettings>(DEFAULT_SETTINGS);
+  const [isLoaded, setIsLoaded] = useState(false);
 
-function loadFromStorage(): Partial<SettingsContextType> {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw) return JSON.parse(raw);
-  } catch (_) {}
-  return {};
-}
-
-export function SettingsProvider({ children }: { children: ReactNode }) {
-  const stored = loadFromStorage();
-
-  const [roundLength, setRoundLength] = useState(stored.roundLength ?? 180);
-  const [restLength, setRestLength] = useState(stored.restLength ?? 45);
-  const [intensity, setIntensity] = useState<'pressure' | 'counter'>(stored.intensity ?? 'pressure');
-  const [minDelay, setMinDelay] = useState(stored.minDelay ?? 1200);
-  const [maxDelay, setMaxDelay] = useState(stored.maxDelay ?? 2800);
-  const [selectedVoiceName, setSelectedVoiceName] = useState(stored.selectedVoiceName ?? '');
-  const [genderFilter, setGenderFilter] = useState<'all' | 'male' | 'female'>(stored.genderFilter ?? 'all');
-  const [callouts, setCallouts] = useState<CalloutType[]>(stored.callouts ?? DEFAULT_CALLOUTS);
-
-  // Save to localStorage on change
+  // Load settings from localStorage on mount
   useEffect(() => {
-    const toStore = {
-      roundLength,
-      restLength,
-      intensity,
-      minDelay,
-      maxDelay,
-      selectedVoiceName,
-      genderFilter,
-      callouts,
-    };
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(toStore));
-  }, [roundLength, restLength, intensity, minDelay, maxDelay, selectedVoiceName, genderFilter, callouts]);
+    const savedSettings = localStorage.getItem('workoutSettings');
+    if (savedSettings) {
+      try {
+        const parsed = JSON.parse(savedSettings);
+        // Ensure intensityId is valid
+        if (parsed.intensityId && !['pressure', 'counter'].includes(parsed.intensityId)) {
+          parsed.intensityId = 'counter';
+        }
+        setSettings({ ...DEFAULT_SETTINGS, ...parsed });
+      } catch (error) {
+        console.error('Failed to load settings from localStorage:', error);
+      }
+    }
+    setIsLoaded(true);
+  }, []);
 
-  const toggleCallout = (id: string) => {
-    setCallouts(prev =>
-      prev.map(c => (c.id === id ? { ...c, enabled: !c.enabled } : c))
-    );
+  // Save to localStorage whenever settings change
+  useEffect(() => {
+    if (isLoaded) {
+      localStorage.setItem('workoutSettings', JSON.stringify(settings));
+    }
+  }, [settings, isLoaded]);
+
+  const updateSettings = async (newSettings: Partial<WorkoutSettings>) => {
+    // Validate intensityId if it's being updated
+    if (newSettings.intensityId && !['pressure', 'counter'].includes(newSettings.intensityId)) {
+      console.warn(`Invalid intensity: ${newSettings.intensityId}, using 'counter'`);
+      newSettings.intensityId = 'counter';
+    }
+    setSettings(prev => ({ ...prev, ...newSettings }));
+  };
+
+  const updateRoundConfig = async (roundNumber: number, config: Partial<RoundConfig>) => {
+    setSettings(prev => ({
+      ...prev,
+      roundConfigs: prev.roundConfigs.map(rc => 
+        rc.roundNumber === roundNumber 
+          ? { ...rc, ...config }
+          : rc
+      )
+    }));
+  };
+
+  const addRoundConfig = async (config: RoundConfig) => {
+    setSettings(prev => ({
+      ...prev,
+      roundConfigs: [...prev.roundConfigs, config],
+      rounds: Math.max(prev.rounds, config.roundNumber)
+    }));
+  };
+
+  const removeRoundConfig = async (roundNumber: number) => {
+    setSettings(prev => ({
+      ...prev,
+      roundConfigs: prev.roundConfigs.filter(rc => rc.roundNumber !== roundNumber)
+    }));
+  };
+
+  const saveToSupabase = async () => {
+    if (!user) return;
+    
+    try {
+      const result = await (supabase
+        .from('user_settings') as any)
+        .upsert({
+          user_id: user.id,
+          settings: settings,
+          updated_at: new Date().toISOString()
+        });
+      
+      if (result.error) throw result.error;
+      console.log('Settings saved to Supabase');
+    } catch (error) {
+      console.error('Failed to save settings to Supabase:', error);
+    }
+  };
+
+  const loadFromSupabase = async () => {
+    if (!user) return;
+    
+    try {
+      const result = await (supabase
+        .from('user_settings') as any)
+        .select('settings')
+        .eq('user_id', user.id)
+        .single();
+      
+      if (result.error) throw result.error;
+      if (result.data?.settings) {
+        const parsedSettings = result.data.settings;
+        // Validate intensity
+        if (parsedSettings.intensityId && !['pressure', 'counter'].includes(parsedSettings.intensityId)) {
+          parsedSettings.intensityId = 'counter';
+        }
+        setSettings(prev => ({ ...prev, ...parsedSettings }));
+        localStorage.setItem('workoutSettings', JSON.stringify(parsedSettings));
+        console.log('Settings loaded from Supabase');
+      }
+    } catch (error) {
+      console.error('Failed to load settings from Supabase:', error);
+    }
+  };
+
+  const value = {
+    settings,
+    updateSettings,
+    updateRoundConfig,
+    addRoundConfig,
+    removeRoundConfig,
+    saveToSupabase,
+    loadFromSupabase,
   };
 
   return (
-    <SettingsContext.Provider
-      value={{
-        roundLength,
-        setRoundLength,
-        restLength,
-        setRestLength,
-        intensity,
-        setIntensity,
-        minDelay,
-        setMinDelay,
-        maxDelay,
-        setMaxDelay,
-        selectedVoiceName,
-        setSelectedVoiceName,
-        genderFilter,
-        setGenderFilter,
-        callouts,
-        toggleCallout,
-      }}
-    >
+    <SettingsContext.Provider value={value}>
       {children}
     </SettingsContext.Provider>
   );
 }
 
 export function useSettings() {
-  const ctx = useContext(SettingsContext);
-  if (!ctx) throw new Error('useSettings must be used within SettingsProvider');
-  return ctx;
+  const context = useContext(SettingsContext);
+  if (!context) {
+    throw new Error('useSettings must be used within SettingsProvider');
+  }
+  return context;
 }

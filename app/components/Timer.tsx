@@ -1,454 +1,424 @@
+// app/components/Timer.tsx - Fixed force init button
 'use client';
 
-import { useState, useEffect, useRef, useCallback } from 'react';
-import { supabase } from '@/lib/supabase';
-import { saveRound, saveCallout, incrementCalloutCount } from '@/lib/workouts';
-import { CalloutType } from '@/contexts/SettingsContext';
+import React, { useEffect, useState } from 'react';
+import { useTimer } from '@/hooks/useTimer';
 import { useWakeLock } from '@/hooks/useWakeLock';
+import { useSettings } from '@/contexts/SettingsContext';
+import { useAudio } from '@/hooks/useAudio';
 
 interface TimerProps {
-  roundLength: number;
-  restLength: number;
-  intensity: 'pressure' | 'counter';
-  minDelay: number;
-  maxDelay: number;
-  selectedVoiceName: string;
-  genderFilter: 'all' | 'male' | 'female';
-  callouts: CalloutType[];
-  onWorkoutStart: (intensity: 'pressure' | 'counter') => Promise<string>;
-  onWorkoutEnd: () => Promise<void>;
-  currentWorkoutId: string | null;
+  onWorkoutStart?: () => Promise<string | void>;
+  onWorkoutEnd?: () => Promise<void>;
+  currentWorkoutId?: string | null;
+  roundLength?: number;
+  restLength?: number;
+  intensity?: string;
+  minDelay?: number;
+  maxDelay?: number;
+  selectedVoiceName?: string;
+  genderFilter?: string;
+  callouts?: any;
 }
 
-const isGoodVoice = (name: string): boolean => {
-  const badPatterns = [
-    'Albert', 'Bad News', 'Whisper', 'Trinoids', 'Robot', 'Rishi',
-    'Tessa', 'Zarvox', 'Fred', 'Junior', 'Ava', 'Alva', 'Milena',
-    'Veena', 'Xander', 'Lea', 'Nicky', 'Nora', 'Sofia', 'Sergio',
-    'Raquel', 'Fiona', 'Serena', 'Ricardo', 'Moira', 'Rosa',
-    'Enrique', 'Conchita', 'Diego', 'Isabela', 'Javier', 'Lucas',
-    'Cellos', 'Whisper', 'Trinoids'
-  ];
-  return !badPatterns.some(p => name.includes(p));
-};
+export default function Timer(props: TimerProps) {
+  const { settings } = useSettings();
+  const audio = useAudio();
+  const [showDebug, setShowDebug] = useState(false);
+  
+  const roundDuration = settings?.roundDuration || props.roundLength || 180;
+  const restDuration = settings?.restDuration || props.restLength || 60;
+  const totalRounds = settings?.rounds || 3;
+  const intensityId = settings?.intensityId || 'counter';
 
-const OFFENSIVE_PRESSURE = ['1', '2', '3', '4', '1-2', '3-4', '1-2-3', '2-3-2', '1-2-3-4', '1-2-3-2', '3-2-1', '4-3-2', '1-2-3-4-1', '2-3-2-4', '1-2-4', '3-2-4'];
-const OFFENSIVE_COUNTER = ['1-2', '3-4', '1-2-3', '2-3-2', '1-2-3-4', '3-2-1', '1-2-4', '2-3-4'];
-
-export default function Timer({
-  roundLength,
-  restLength,
-  intensity,
-  minDelay,
-  maxDelay,
-  selectedVoiceName,
-  genderFilter,
-  callouts,
-  onWorkoutStart,
-  onWorkoutEnd,
-  currentWorkoutId,
-}: TimerProps) {
-  const [phase, setPhase] = useState<'idle' | 'round' | 'rest' | 'paused'>('idle');
-  const [elapsed, setElapsed] = useState(0);
-  const [roundNumber, setRoundNumber] = useState(0);
-  const [remaining, setRemaining] = useState(roundLength);
-  const [calloutText, setCalloutText] = useState('Awaiting command...');
-  const [calloutType, setCalloutType] = useState<'offense' | 'defense' | 'mixed' | 'ground' | null>(null);
-  const [currentRoundId, setCurrentRoundId] = useState<string | null>(null);
-  const [logs, setLogs] = useState<{ text: string; type: string; time: string }[]>([]);
-
-  const timerRef = useRef<NodeJS.Timeout | null>(null);
-  const cadenceRef = useRef<NodeJS.Timeout | null>(null);
-  const maxTimeRef = useRef(roundLength);
-  const isActiveRef = useRef(false);
-  const phaseRef = useRef(phase);
-  const tickRef = useRef<() => void>(() => {});
-
-  useEffect(() => { phaseRef.current = phase; }, [phase]);
-
-  const { requestWakeLock, releaseWakeLock } = useWakeLock();
-
-  // --- Voice handling ---
-  const [voices, setVoices] = useState<SpeechSynthesisVoice[]>([]);
-  const [selectedVoice, setSelectedVoice] = useState<SpeechSynthesisVoice | null>(null);
-
-  useEffect(() => {
-    let retries = 0;
-    const loadVoices = () => {
-      const allVoices = window.speechSynthesis.getVoices();
-      if (allVoices.length === 0 && retries < 5) {
-        retries++;
-        setTimeout(loadVoices, 500);
-        return;
-      }
-      let enVoices = allVoices.filter(v => v.lang.startsWith('en'));
-      if (genderFilter === 'male') {
-        enVoices = enVoices.filter(v => /male|david|daniel|mark|paul|george|andrew/i.test(v.name));
-      } else if (genderFilter === 'female') {
-        enVoices = enVoices.filter(v => /female|samantha|zira|susan|kate|emma|julie|alice/i.test(v.name));
-      }
-      enVoices = enVoices.filter(v => isGoodVoice(v.name));
-      setVoices(enVoices);
-      const found = selectedVoiceName ? enVoices.find(v => v.name === selectedVoiceName) : null;
-      setSelectedVoice(found || enVoices[0] || null);
-    };
-    loadVoices();
-    window.speechSynthesis.onvoiceschanged = loadVoices;
-  }, [genderFilter, selectedVoiceName]);
-
-  const initializeSpeech = useCallback(() => {
-    if (!window.speechSynthesis) return;
-    window.speechSynthesis.getVoices();
-    const silent = new SpeechSynthesisUtterance(' ');
-    silent.volume = 0;
-    window.speechSynthesis.speak(silent);
-  }, []);
-
-  const speak = useCallback((text: string) => {
-    if (!window.speechSynthesis) return;
-    window.speechSynthesis.cancel();
-    const cleanText = text.replace(/-/g, ' ').replace(/\s+/g, ' ').trim();
-    const utterance = new SpeechSynthesisUtterance(cleanText);
-    utterance.lang = 'en-US';
-    utterance.rate = intensity === 'pressure' ? 0.95 : 0.85;
-    utterance.pitch = 1.0;
-    utterance.volume = 1.0;
-    if (selectedVoice) utterance.voice = selectedVoice;
-    window.speechSynthesis.speak(utterance);
-  }, [intensity, selectedVoice]);
-
-const generateCallout = useCallback(() => {
-  const isPressure = intensity === 'pressure';
-  const offenseRatio = isPressure ? 0.85 : 0.50;
-  const roll = Math.random();
-
-  // Get enabled IDs for each category
-  const enabledOffenseIds = callouts.filter(c => c.enabled && c.category === 'offense').map(c => c.id);
-  const enabledDefenseIds = callouts.filter(c => c.enabled && c.category === 'defense').map(c => c.id);
-  const enabledGroundIds = callouts.filter(c => c.enabled && c.category === 'ground').map(c => c.id);
-
-  // Build full combo pools (real combinations like "1-2", "2-3-2")
-  const comboPool = isPressure ? OFFENSIVE_PRESSURE : OFFENSIVE_COUNTER;
-
-  // Filter combos: keep only those where every punch is enabled
-  const validCombos = comboPool.filter(combo => {
-    const parts = combo.split('-');
-    return parts.every(p => enabledOffenseIds.includes(p));
+  const {
+    config,
+    timeRemaining,
+    isRunning,
+    isPaused,
+    currentCallout,
+    isDefensive,
+    startTimer,
+    pauseTimer,
+    resumeTimer,
+    resetTimer,
+  } = useTimer({
+    roundDuration: roundDuration,
+    restDuration: restDuration,
+    rounds: totalRounds,
+    intensityId: intensityId,
   });
 
-  // If no valid combos, fallback to a single enabled punch (or just "1")
-  const offensePool = validCombos.length > 0 ? validCombos : (enabledOffenseIds.length > 0 ? enabledOffenseIds : ['1']);
+  const { requestWakeLock, releaseWakeLock, isActive } = useWakeLock({
+    onError: (error) => console.error('Wake Lock error:', error),
+    onRelease: () => console.log('Wake lock released'),
+  });
 
-  // Defense & ground pools
-  const defensePool = enabledDefenseIds.length > 0 ? enabledDefenseIds : ['Slip left'];
-  const groundPool = enabledGroundIds.length > 0 ? enabledGroundIds : ['Shrimp'];
+  useEffect(() => {
+    const preload = () => {
+      audio.preloadVoices();
+      document.removeEventListener('click', preload);
+      document.removeEventListener('touchstart', preload);
+    };
+    
+    document.addEventListener('click', preload);
+    document.addEventListener('touchstart', preload);
+    
+    return () => {
+      document.removeEventListener('click', preload);
+      document.removeEventListener('touchstart', preload);
+    };
+  }, [audio]);
 
-  // Helper: randomly reverse a combo string (e.g., "1-2-3" → "3-2-1")
-  const maybeReverseCombo = (combo: string): string => {
-    // 40% chance to reverse
-    if (Math.random() < 0.4) {
-      const parts = combo.split('-');
-      return parts.reverse().join('-');
+  useEffect(() => {
+    if (isRunning) {
+      requestWakeLock();
+    } else {
+      releaseWakeLock();
     }
-    return combo;
+  }, [isRunning, requestWakeLock, releaseWakeLock]);
+
+  // --- Test Audio Functions ---
+  const testBeep = async () => {
+    console.log('🔊 Testing beep...');
+    try {
+      await audio.ensureContextReady();
+      await audio.playBeep();
+      console.log('✅ Beep test complete');
+    } catch (error) {
+      console.error('❌ Beep test failed:', error);
+    }
   };
 
-  let text: string, type: 'offense' | 'defense' | 'mixed' | 'ground';
-
-  if (roll < offenseRatio) {
-    // Offense or mixed
-    const combo = offensePool[Math.floor(Math.random() * offensePool.length)];
-    const reversedCombo = maybeReverseCombo(combo);
-    type = 'offense';
-    text = reversedCombo;
-
-    // In counter mode, sometimes add a defensive cue after the combo
-    if (!isPressure && Math.random() < 0.25 && defensePool.length > 0) {
-      const def = defensePool[Math.floor(Math.random() * defensePool.length)];
-      text = `${reversedCombo} → ${def}`;
-      type = 'mixed';
+  const testBell = async () => {
+    console.log('🔊 Testing bell...');
+    try {
+      await audio.ensureContextReady();
+      await audio.playBell();
+      console.log('✅ Bell test complete');
+    } catch (error) {
+      console.error('❌ Bell test failed:', error);
     }
-  } else {
-    // Defense or ground
-    const isGround = Math.random() < 0.3 && groundPool.length > 0;
-    const pool = isGround ? groundPool : defensePool;
-    text = pool[Math.floor(Math.random() * pool.length)];
-    type = isGround ? 'ground' : 'defense';
-  }
+  };
 
-  return { text, type };
-}, [intensity, callouts]);
+  const testLongBeep = async () => {
+    console.log('🔊 Testing long beep...');
+    try {
+      await audio.ensureContextReady();
+      await audio.playLongBeep();
+      console.log('✅ Long beep test complete');
+    } catch (error) {
+      console.error('❌ Long beep test failed:', error);
+    }
+  };
 
-  const scheduleCadence = useCallback(() => {
-    if (!isActiveRef.current) return;
-    if (cadenceRef.current) clearTimeout(cadenceRef.current);
-    const delay = Math.floor(Math.random() * (maxDelay - minDelay + 1)) + minDelay;
-    cadenceRef.current = setTimeout(() => {
-      if (!isActiveRef.current) return;
-      const callout = generateCallout();
-      setCalloutText(callout.text);
-      setCalloutType(callout.type);
-      speak(callout.text);
-      if (currentWorkoutId && currentRoundId) {
-        saveCallout({
-          workout_id: currentWorkoutId,
-          round_id: currentRoundId,
-          callout_text: callout.text,
-          callout_type: callout.type,
-        });
-        incrementCalloutCount(currentRoundId);
-      }
-      const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-      setLogs(prev => [{ text: callout.text, type: callout.type, time }, ...prev].slice(0, 50));
-      scheduleCadence();
-    }, delay);
-  }, [minDelay, maxDelay, generateCallout, speak, currentWorkoutId, currentRoundId]);
+  const testHalfway = async () => {
+    console.log('🔊 Testing halfway...');
+    try {
+      await audio.ensureContextReady();
+      await audio.playHalfway();
+      console.log('✅ Halfway test complete');
+    } catch (error) {
+      console.error('❌ Halfway test failed:', error);
+    }
+  };
 
-  // --- Tick function (updates elapsed and remaining) ---
-  const tick = useCallback(() => {
-    console.log('[Timer] tick called, elapsed:', elapsed, 'remaining:', remaining);
-    setElapsed(prev => {
-      const newElapsed = prev + 1;
-      const newRemaining = Math.max(0, maxTimeRef.current - newElapsed);
-      setRemaining(newRemaining);
-      if (newElapsed >= maxTimeRef.current) {
-        const currentPhase = phaseRef.current;
-        console.log('[Timer] phase complete, currentPhase:', currentPhase);
-        if (currentPhase === 'round') {
-          setPhase('rest');
-          maxTimeRef.current = restLength;
-          setElapsed(0);
-          setRemaining(restLength);
-          isActiveRef.current = false;
-          if (cadenceRef.current) clearTimeout(cadenceRef.current);
-          supabase
-            .from('workouts')
-            .update({ total_rounds: roundNumber })
-            .eq('id', currentWorkoutId);
-          releaseWakeLock();
-          return 0;
-        } else if (currentPhase === 'rest') {
-          const nextRound = roundNumber + 1;
-          setRoundNumber(nextRound);
-          setPhase('round');
-          maxTimeRef.current = roundLength;
-          setElapsed(0);
-          setRemaining(roundLength);
-          isActiveRef.current = true;
-          requestWakeLock();
-          if (currentWorkoutId) {
-            saveRound({
-              workout_id: currentWorkoutId,
-              round_number: nextRound,
-              round_type: 'round',
-              duration: roundLength,
-              callout_count: 0,
-            }).then(({ data }) => {
-              if (data) setCurrentRoundId(data.id);
-            });
-          }
-          scheduleCadence();
-          return 0;
-        }
-      }
-      return newElapsed;
-    });
-  }, [roundLength, restLength, roundNumber, currentWorkoutId, scheduleCadence, requestWakeLock, releaseWakeLock, elapsed, remaining]);
+  const testTenSeconds = async () => {
+    console.log('🔊 Testing 10 seconds...');
+    try {
+      await audio.ensureContextReady();
+      await audio.playTenSeconds();
+      console.log('✅ 10 seconds test complete');
+    } catch (error) {
+      console.error('❌ 10 seconds test failed:', error);
+    }
+  };
 
-  // Update tickRef whenever tick changes
-  useEffect(() => {
-    tickRef.current = tick;
-  }, [tick]);
+  // Fixed: Force initialize audio without accessing ref directly
+  const forceInit = async () => {
+    console.log('🔊 Force initializing audio...');
+    try {
+      // Just call ensureContextReady which handles everything
+      await audio.ensureContextReady();
+      console.log('✅ Audio state after force init:', audio.isContextReady);
+      
+      // Show status to user
+      const status = audio.isContextReady ? '✅ YES' : '❌ NO';
+      alert(`Audio initialized: ${status}\n\nTry clicking "Test Beep" now.`);
+    } catch (error) {
+      console.error('❌ Force init failed:', error);
+      alert('Audio initialization failed. Please try clicking on the screen first.');
+    }
+  };
 
-  // --- Start / Pause / Reset ---
-  const startTimer = useCallback(async () => {
-    console.log('[Timer] startTimer called, phase:', phase);
-    initializeSpeech();
+  const formatTime = (seconds: number): string => {
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+  };
 
-    if (phase === 'idle') {
-      console.log('[Timer] Starting new workout...');
-      let workoutId: string | null = null;
+  const getPhaseLabel = () => {
+    switch (config.phase) {
+      case 'idle': return 'Ready';
+      case 'countdown': return `Starting in ${config.countdown}s...`;
+      case 'round': return `Round ${config.currentRound}/${config.rounds}`;
+      case 'rest': return `Rest ${config.currentRound}/${config.rounds}`;
+      case 'finished': return '🎉 Workout Complete!';
+      default: return '';
+    }
+  };
+
+  const getPhaseColor = () => {
+    switch (config.phase) {
+      case 'round': return 'text-red-500';
+      case 'rest': return 'text-green-500';
+      case 'countdown': 
+        return config.countdown <= 3 ? 'text-yellow-500 animate-pulse' : 'text-yellow-500';
+      case 'finished': return 'text-purple-500';
+      default: return 'text-white';
+    }
+  };
+
+  const handleStart = async () => {
+    audio.hapticFeedback(15);
+    await audio.ensureContextReady();
+    
+    if (props.onWorkoutStart) {
       try {
-        workoutId = await onWorkoutStart(intensity);
-        console.log('[Timer] Workout ID returned:', workoutId);
+        await props.onWorkoutStart();
       } catch (error) {
-        console.error('[Timer] onWorkoutStart threw error:', error);
-        workoutId = 'fake-id-' + Date.now();
-        console.log('[Timer] Using fake ID:', workoutId);
+        console.error('Failed to start workout:', error);
       }
-
-      if (!workoutId) {
-        console.error('[Timer] No workout ID available');
-        return;
-      }
-
-      setRoundNumber(1);
-      setPhase('round');
-      maxTimeRef.current = roundLength;
-      setElapsed(0);
-      setRemaining(roundLength);
-      isActiveRef.current = true;
-      requestWakeLock();
-
-      try {
-        const { data } = await saveRound({
-          workout_id: workoutId,
-          round_number: 1,
-          round_type: 'round',
-          duration: roundLength,
-          callout_count: 0,
-        });
-        if (data) {
-          setCurrentRoundId(data.id);
-          console.log('[Timer] Round 1 ID created:', data.id);
-        } else {
-          console.warn('[Timer] saveRound returned no data, using fake round id');
-          setCurrentRoundId('fake-round-' + Date.now());
-        }
-      } catch (error) {
-        console.error('[Timer] saveRound threw error:', error);
-        setCurrentRoundId('fake-round-' + Date.now());
-      }
-
-      console.log('[Timer] Starting interval and cadence...');
-      // Use setInterval with the ref to the latest tick
-      timerRef.current = setInterval(() => {
-        console.log('🔥 INTERVAL TICK!');
-        tickRef.current();
-      }, 1000);
-      scheduleCadence();
-      console.log('[Timer] Start completed');
-    } else if (phase === 'paused') {
-      console.log('[Timer] Resuming from pause');
-      setPhase('round');
-      isActiveRef.current = true;
-      requestWakeLock();
-      timerRef.current = setInterval(() => {
-        tickRef.current();
-      }, 1000);
-      scheduleCadence();
     }
-  }, [phase, roundLength, intensity, scheduleCadence, onWorkoutStart, initializeSpeech, requestWakeLock]);
+    
+    startTimer();
+  };
 
-  const pauseTimer = useCallback(() => {
-    if (phase === 'round' || phase === 'rest') {
-      console.log('[Timer] Pausing');
-      setPhase('paused');
-      isActiveRef.current = false;
-      if (timerRef.current) clearInterval(timerRef.current);
-      if (cadenceRef.current) clearTimeout(cadenceRef.current);
-      if (window.speechSynthesis) window.speechSynthesis.cancel();
-      releaseWakeLock();
+  const handleEnd = async () => {
+    audio.hapticFeedback([30, 30, 30]);
+    if (props.onWorkoutEnd) {
+      await props.onWorkoutEnd();
     }
-  }, [phase, releaseWakeLock]);
+    resetTimer();
+  };
 
-  const resetTimer = useCallback(async () => {
-    console.log('[Timer] Resetting');
-    if (timerRef.current) clearInterval(timerRef.current);
-    if (cadenceRef.current) clearTimeout(cadenceRef.current);
-    if (window.speechSynthesis) window.speechSynthesis.cancel();
-    setPhase('idle');
-    setElapsed(0);
-    setRoundNumber(0);
-    setRemaining(roundLength);
-    setCalloutText('Awaiting command...');
-    setCalloutType(null);
-    setCurrentRoundId(null);
-    isActiveRef.current = false;
-    setLogs([]);
-    releaseWakeLock();
-    if (currentWorkoutId) {
-      await onWorkoutEnd();
-    }
-  }, [roundLength, currentWorkoutId, onWorkoutEnd, releaseWakeLock]);
+  const handlePause = () => {
+    audio.hapticFeedback([10, 20]);
+    pauseTimer();
+  };
 
-  useEffect(() => {
-    return () => {
-      if (timerRef.current) clearInterval(timerRef.current);
-      if (cadenceRef.current) clearTimeout(cadenceRef.current);
-      if (window.speechSynthesis) window.speechSynthesis.cancel();
-      releaseWakeLock();
-    };
-  }, []);
+  const handleResume = () => {
+    audio.hapticFeedback([20, 10]);
+    audio.ensureContextReady();
+    resumeTimer();
+  };
 
-  const isStartDisabled = phase === 'round' || phase === 'rest';
-  const isPauseDisabled = phase === 'idle' || phase === 'paused';
+  const handleReset = () => {
+    audio.hapticFeedback([30, 30, 30]);
+    resetTimer();
+  };
+
+  const isComplete = config.phase === 'finished';
 
   return (
-    <div className="max-w-2xl mx-auto p-4">
-      <div className="text-center mb-4">
-        <div className={`text-7xl font-bold font-mono ${phase === 'round' ? 'text-red-400' : phase === 'rest' ? 'text-blue-400' : 'text-gray-300'}`}>
-          {Math.floor(remaining / 60)}:{(remaining % 60).toString().padStart(2, '0')}
+    <div className="flex flex-col items-center justify-center min-h-[80vh] p-4">
+      <div className="text-center w-full max-w-md">
+        {/* Timer Display */}
+        <div className={`text-8xl font-bold mb-2 timer-number ${getPhaseColor()}`}>
+          {config.phase === 'countdown' 
+            ? config.countdown 
+            : formatTime(timeRemaining)}
         </div>
-        <div className="text-gray-400 mt-1">
-          {phase === 'idle' && 'Ready'}
-          {phase === 'round' && `⚔️ Round ${roundNumber}`}
-          {phase === 'rest' && `🔄 Rest (Round ${roundNumber} complete)`}
-          {phase === 'paused' && '⏸ Paused'}
+        
+        <div className="text-2xl font-semibold text-gray-300 mb-1">
+          {getPhaseLabel()}
         </div>
-      </div>
+        
+        <div className="text-sm text-gray-500 mb-4">
+          {config.phase === 'countdown' && 'Get ready! 🥊'}
+          {config.phase === 'round' && `Round ${config.currentRound}/${config.rounds}`}
+          {config.phase === 'rest' && `Rest between rounds`}
+          {isComplete && 'Great job! 🎉'}
+        </div>
 
-      <div className="bg-gray-800 rounded-2xl p-6 mb-4 min-h-24 flex items-center justify-center border border-gray-700">
-        <div className="text-2xl font-semibold text-center">
-          {calloutText}
-          {calloutType && (
-            <span className={`ml-3 text-xs font-bold uppercase px-2 py-1 rounded-full ${
-              calloutType === 'defense' ? 'bg-blue-500/20 text-blue-300' :
-              calloutType === 'offense' ? 'bg-red-500/20 text-red-300' :
-              calloutType === 'ground' ? 'bg-green-500/20 text-green-300' :
-              'bg-purple-500/20 text-purple-300'
+        {/* Countdown Progress Bar - Show during countdown */}
+        {config.phase === 'countdown' && (
+          <div className="w-full mx-auto mb-8 bg-gray-700 rounded-full h-2.5 overflow-hidden">
+            <div 
+              className="h-2.5 rounded-full transition-all duration-1000 bg-yellow-500"
+              style={{
+                width: `${(config.countdown / config.countdownTotal) * 100}%`
+              }}
+            />
+          </div>
+        )}
+
+        {/* Callout Display */}
+        {currentCallout && (config.phase === 'round' || config.phase === 'rest') && (
+          <div className={`mb-6 p-4 rounded-lg transition-all duration-300 transform ${
+            isDefensive 
+              ? 'bg-blue-500/20 border border-blue-500/50' 
+              : 'bg-yellow-500/20 border border-yellow-500/50'
+          }`}>
+            <div className={`text-3xl font-bold ${
+              isDefensive ? 'text-blue-400' : 'text-yellow-400'
             }`}>
-              {calloutType}
-            </span>
+              {currentCallout}
+            </div>
+            <div className="text-xs text-gray-500 mt-1">
+              {isDefensive ? '🛡️ Defense' : '🥊 Combo'}
+            </div>
+          </div>
+        )}
+
+        {/* Regular Progress Bar (for rounds/rest) */}
+        {config.phase !== 'countdown' && (
+          <div className="w-full mx-auto mb-8 bg-gray-700 rounded-full h-2.5 overflow-hidden">
+            <div 
+              className={`h-2.5 rounded-full transition-all duration-1000 ${
+                config.phase === 'round' ? 'bg-red-500' : 
+                config.phase === 'rest' ? 'bg-green-500' : 
+                isComplete ? 'bg-purple-500' : 'bg-gray-500'
+              }`}
+              style={{
+                width: `${(timeRemaining / (config.phase === 'rest' ? config.restDuration : config.roundDuration)) * 100}%`
+              }}
+            />
+          </div>
+        )}
+
+        {/* Controls */}
+        <div className="flex gap-4 justify-center flex-wrap">
+          {!isRunning && !isComplete && config.phase === 'idle' && (
+            <button
+              onClick={handleStart}
+              className="px-8 py-4 text-xl font-bold text-white bg-green-600 rounded-full hover:bg-green-700 active:scale-95 transition-all"
+            >
+              Start Workout
+            </button>
+          )}
+
+          {isRunning && !isPaused && (
+            <>
+              <button
+                onClick={handlePause}
+                className="px-8 py-4 text-xl font-bold text-white bg-yellow-600 rounded-full hover:bg-yellow-700 active:scale-95 transition-all"
+              >
+                ⏸ Pause
+              </button>
+              <button
+                onClick={handleEnd}
+                className="px-8 py-4 text-xl font-bold text-white bg-red-600 rounded-full hover:bg-red-700 active:scale-95 transition-all"
+              >
+                ⏹ Stop
+              </button>
+            </>
+          )}
+
+          {isRunning && isPaused && (
+            <>
+              <button
+                onClick={handleResume}
+                className="px-8 py-4 text-xl font-bold text-white bg-green-600 rounded-full hover:bg-green-700 active:scale-95 transition-all"
+              >
+                ▶ Resume
+              </button>
+              <button
+                onClick={handleEnd}
+                className="px-8 py-4 text-xl font-bold text-white bg-red-600 rounded-full hover:bg-red-700 active:scale-95 transition-all"
+              >
+                ⏹ Stop
+              </button>
+            </>
+          )}
+
+          {isComplete && (
+            <button
+              onClick={handleReset}
+              className="px-8 py-4 text-xl font-bold text-white bg-blue-600 rounded-full hover:bg-blue-700 active:scale-95 transition-all"
+            >
+              🔄 New Workout
+            </button>
           )}
         </div>
-      </div>
 
-      <div className="flex gap-3 justify-center mb-6">
-        <button
-          onClick={() => {
-            console.log('🔘 Start button clicked');
-            startTimer();
-          }}
-          disabled={isStartDisabled}
-          className="px-6 py-2 bg-yellow-500 hover:bg-yellow-600 text-gray-900 font-semibold rounded-full disabled:opacity-50"
-        >
-          {phase === 'idle' ? '▶ Start' : phase === 'paused' ? '▶ Resume' : '▶ Start'}
-        </button>
-        <button
-          onClick={pauseTimer}
-          disabled={isPauseDisabled}
-          className="px-6 py-2 bg-gray-600 hover:bg-gray-500 text-white font-semibold rounded-full disabled:opacity-50"
-        >
-          ⏸ Pause
-        </button>
-        <button
-          onClick={resetTimer}
-          className="px-6 py-2 bg-red-600 hover:bg-red-700 text-white font-semibold rounded-full"
-        >
-          ⟲ Reset
-        </button>
-      </div>
-
-      <div className="bg-gray-800 rounded-xl p-4 border border-gray-700">
-        <div className="flex justify-between items-center mb-2">
-          <h3 className="text-sm font-semibold text-gray-400 uppercase">Callout Log</h3>
-          <button onClick={() => setLogs([])} className="text-xs text-gray-500 hover:text-white">Clear</button>
+        {/* Status Indicators */}
+        <div className="mt-4 flex gap-4 justify-center text-xs text-gray-500 flex-wrap">
+          {isActive && (
+            <span className="text-green-500">🔋 Screen stays on</span>
+          )}
+          {!isActive && isRunning && (
+            <span className="text-yellow-500">💤 Screen may sleep</span>
+          )}
+          {audio.isSpeaking && (
+            <span className="text-blue-500">🔊 Speaking...</span>
+          )}
+          {props.currentWorkoutId && (
+            <span className="text-gray-500">ID: {props.currentWorkoutId.slice(0, 8)}</span>
+          )}
         </div>
-        <div className="max-h-48 overflow-y-auto space-y-1">
-          {logs.map((log, i) => (
-            <div key={i} className="flex justify-between text-sm p-1 bg-gray-700/30 rounded">
-              <span className={`${
-                log.type === 'defense' ? 'text-blue-300' :
-                log.type === 'offense' ? 'text-red-300' :
-                log.type === 'ground' ? 'text-green-300' :
-                'text-purple-300'
-              }`}>
-                {log.type === 'defense' ? '🛡' : log.type === 'offense' ? '🥊' : log.type === 'ground' ? '🤼' : '⚡'} {log.text}
-              </span>
-              <span className="text-gray-500 text-xs">{log.time}</span>
+
+        {/* Debug Section */}
+        <div className="mt-6">
+          <button
+            onClick={() => setShowDebug(!showDebug)}
+            className="text-xs text-gray-600 hover:text-gray-400 transition-colors"
+          >
+            {showDebug ? 'Hide Debug' : 'Show Debug'}
+          </button>
+          
+          {showDebug && (
+            <div className="mt-2 p-4 bg-gray-800 rounded-lg border border-gray-700">
+              <div className="text-xs text-gray-400 mb-2">🔊 Audio Test Panel</div>
+              <div className="text-xs text-gray-500 mb-2">
+                Context Ready: {audio.isContextReady ? '✅ YES' : '❌ NO'}
+                {!audio.isContextReady && ' (Click "Force Init" first)'}
+              </div>
+              <div className="flex gap-2 justify-center flex-wrap">
+                {/* Force Init button */}
+                <button
+                  onClick={forceInit}
+                  className="px-3 py-1 text-xs bg-red-600 hover:bg-red-700 rounded transition-colors text-white"
+                >
+                  🔄 Force Init
+                </button>
+                {/* Test buttons */}
+                <button
+                  onClick={testBeep}
+                  className="px-3 py-1 text-xs bg-blue-600 hover:bg-blue-700 rounded transition-colors text-white"
+                >
+                  Test Beep
+                </button>
+                <button
+                  onClick={testBell}
+                  className="px-3 py-1 text-xs bg-purple-600 hover:bg-purple-700 rounded transition-colors text-white"
+                >
+                  Test Bell
+                </button>
+                <button
+                  onClick={testLongBeep}
+                  className="px-3 py-1 text-xs bg-green-600 hover:bg-green-700 rounded transition-colors text-white"
+                >
+                  Long Beep
+                </button>
+                <button
+                  onClick={testHalfway}
+                  className="px-3 py-1 text-xs bg-yellow-600 hover:bg-yellow-700 rounded transition-colors text-white"
+                >
+                  Halfway
+                </button>
+                <button
+                  onClick={testTenSeconds}
+                  className="px-3 py-1 text-xs bg-orange-600 hover:bg-orange-700 rounded transition-colors text-white"
+                >
+                  10s
+                </button>
+              </div>
+              <div className="mt-2 text-xs text-gray-500">
+                💡 Tip: Click "Force Init" first, then test sounds
+              </div>
             </div>
-          ))}
+          )}
         </div>
       </div>
     </div>

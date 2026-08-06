@@ -1,9 +1,9 @@
+// app/page.tsx
 'use client';
 
-import { useEffect, useState } from 'react';
-import { User } from '@supabase/supabase-js';
-import { supabase } from '@/lib/supabase';
-import { getCurrentUser } from '@/lib/auth';
+import { useState } from 'react';
+import { getSupabaseClient } from '@/lib/supabase';
+import { useAuth } from '@/lib/auth';
 import { WorkoutProvider, useWorkout } from '@/contexts/WorkoutContext';
 import { SettingsProvider, useSettings } from '@/contexts/SettingsContext';
 import Timer from '@/app/components/Timer';
@@ -11,90 +11,122 @@ import History from '@/app/components/History';
 import Settings from '@/app/components/Settings';
 import AuthScreen from '@/app/components/AuthScreen';
 
+const supabase = getSupabaseClient();
+
+// Match database values
+const VALID_INTENSITIES = ['pressure', 'counter'];
+
 function Dashboard() {
-  const [user, setUser] = useState<User | null>(null);
+  const { user, loading, signOut } = useAuth();
   const [view, setView] = useState<'workout' | 'history' | 'settings'>('workout');
   const { currentWorkoutId, setCurrentWorkoutId } = useWorkout();
-  const {
-    roundLength,
-    restLength,
-    intensity,
-    minDelay,
-    maxDelay,
-    selectedVoiceName,
-    genderFilter,
-    callouts,
-  } = useSettings();
+  const { settings } = useSettings();
 
-  useEffect(() => {
-    getCurrentUser().then(setUser);
-    const { data: listener } = supabase.auth.onAuthStateChange((event, session) => {
-      setUser(session?.user ?? null);
-    });
-    return () => listener?.subscription.unsubscribe();
-  }, []);
+  const handleWorkoutStart = async () => {
+    if (!user) throw new Error('User not authenticated');
+    
+    try {
+      // Map intensity to valid database values
+      let intensityValue = settings.intensityId || 'counter';
+      
+      // Ensure it's a valid value for your database
+      if (!VALID_INTENSITIES.includes(intensityValue)) {
+        console.warn(`Invalid intensity: ${intensityValue}, using fallback 'counter'`);
+        intensityValue = 'counter';
+      }
+      
+      console.log('[Page] Starting workout with intensity:', intensityValue);
+      
+      const result = await (supabase
+        .from('workouts') as any)
+        .insert({
+          user_id: user.id,
+          started_at: new Date().toISOString(),
+          intensity: intensityValue,
+        })
+        .select()
+        .single();
 
-  if (!user) return <AuthScreen />;
-
-const handleWorkoutStart = async (intensity: 'pressure' | 'counter') => {
-  const { data, error } = await supabase
-    .from('workouts')
-    .insert([{
-      user_id: user.id,
-      started_at: new Date().toISOString(),
-      intensity,
-    }])
-    .select()
-    .single();
-
-  if (error) {
-    console.error('Failed to start workout:', error);
-    throw error;
-  }
-  if (data) {
-    console.log('[Page] Workout created with ID:', data.id);
-    setCurrentWorkoutId(data.id);
-    return data.id;
-  }
-    throw new Error('No data returned');
-};
+      if (result.error) throw result.error;
+      if (result.data) {
+        console.log('[Page] Workout created with ID:', result.data.id);
+        setCurrentWorkoutId(result.data.id);
+        return result.data.id;
+      }
+      throw new Error('No data returned');
+    } catch (error: any) {
+      console.error('Failed to start workout:', error);
+      alert('Failed to start workout. Please try again.');
+      throw error;
+    }
+  };
 
   const handleWorkoutEnd = async () => {
     if (currentWorkoutId) {
-      await supabase
-        .from('workouts')
-        .update({ ended_at: new Date().toISOString() })
-        .eq('id', currentWorkoutId);
-      setCurrentWorkoutId(null);
+      try {
+        const result = await (supabase
+          .from('workouts') as any)
+          .update({ ended_at: new Date().toISOString() })
+          .eq('id', currentWorkoutId);
+        
+        if (result.error) throw result.error;
+        setCurrentWorkoutId(null);
+      } catch (error) {
+        console.error('Failed to end workout:', error);
+      }
     }
   };
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-gray-900 flex items-center justify-center">
+        <div className="text-white text-xl">Loading...</div>
+      </div>
+    );
+  }
+
+  if (!user) {
+    return <AuthScreen />;
+  }
 
   return (
     <div className="min-h-screen bg-gray-900 text-white">
       <header className="p-4 flex justify-between items-center border-b border-gray-700">
-        <h1 className="text-xl font-bold">🥊 Tactical Boxing</h1>
-        <div className="flex gap-3">
+        <h1 className="text-xl font-bold">🥊 Boxing Timer</h1>
+        <div className="flex gap-3 flex-wrap">
           <button
             onClick={() => setView('workout')}
-            className={`px-3 py-1.5 rounded-full text-sm font-semibold ${view === 'workout' ? 'bg-yellow-500 text-gray-900' : 'bg-gray-700 text-gray-300'}`}
+            className={`px-3 py-1.5 rounded-full text-sm font-semibold transition-colors ${
+              view === 'workout' 
+                ? 'bg-yellow-500 text-gray-900' 
+                : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+            }`}
           >
             Workout
           </button>
           <button
             onClick={() => setView('history')}
-            className={`px-3 py-1.5 rounded-full text-sm font-semibold ${view === 'history' ? 'bg-yellow-500 text-gray-900' : 'bg-gray-700 text-gray-300'}`}
+            className={`px-3 py-1.5 rounded-full text-sm font-semibold transition-colors ${
+              view === 'history' 
+                ? 'bg-yellow-500 text-gray-900' 
+                : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+            }`}
           >
             History
           </button>
           <button
             onClick={() => setView(view === 'settings' ? 'workout' : 'settings')}
-            className="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 rounded-full text-sm font-semibold"
+            className={`px-3 py-1.5 rounded-full text-sm font-semibold transition-colors ${
+              view === 'settings' 
+                ? 'bg-yellow-500 text-gray-900' 
+                : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+            }`}
           >
-            ⚙️
+            ⚙️ Settings
           </button>
           <button
-            onClick={() => supabase.auth.signOut()}
-            className="px-3 py-1.5 bg-red-600 hover:bg-red-700 rounded-full text-sm font-semibold"
+            onClick={signOut}
+            className="px-3 py-1.5 bg-red-600 hover:bg-red-700 rounded-full text-sm font-semibold transition-colors"
           >
             Sign Out
           </button>
@@ -102,21 +134,15 @@ const handleWorkoutStart = async (intensity: 'pressure' | 'counter') => {
       </header>
 
       {view === 'workout' && (
-        <Timer
-          roundLength={roundLength}
-          restLength={restLength}
-          intensity={intensity}
-          minDelay={minDelay}
-          maxDelay={maxDelay}
-          selectedVoiceName={selectedVoiceName}
-          genderFilter={genderFilter}
-          callouts={callouts}
+        <Timer 
           onWorkoutStart={handleWorkoutStart}
           onWorkoutEnd={handleWorkoutEnd}
           currentWorkoutId={currentWorkoutId}
         />
       )}
+      
       {view === 'history' && <History />}
+      
       {view === 'settings' && <Settings />}
     </div>
   );

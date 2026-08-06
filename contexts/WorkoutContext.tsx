@@ -1,4 +1,7 @@
-import { createContext, useContext, useState, ReactNode } from 'react';
+// contexts/WorkoutContext.tsx
+'use client';
+
+import React, { createContext, useContext, useState } from 'react';
 
 interface WorkoutContextType {
   currentWorkoutId: string | null;
@@ -7,7 +10,7 @@ interface WorkoutContextType {
 
 const WorkoutContext = createContext<WorkoutContextType | undefined>(undefined);
 
-export function WorkoutProvider({ children }: { children: ReactNode }) {
+export function WorkoutProvider({ children }: { children: React.ReactNode }) {
   const [currentWorkoutId, setCurrentWorkoutId] = useState<string | null>(null);
 
   return (
@@ -19,10 +22,8 @@ export function WorkoutProvider({ children }: { children: ReactNode }) {
 
 export function useWorkout() {
   const context = useContext(WorkoutContext);
-  if (context === undefined) {
-    throw new Error('useWorkout must be used within a WorkoutProvider');
+  if (!context) {
+    throw new Error('useWorkout must be used within WorkoutProvider');
   }
   return context;
 }
-
-export default WorkoutContext;
