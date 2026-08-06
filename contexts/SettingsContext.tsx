@@ -4,7 +4,7 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { getSupabaseClient } from '@/lib/supabase';
 import { useAuth } from '@/lib/auth';
-import { ROUTINE_TEMPLATES } from '@/types/workout';
+import { ROUTINE_TEMPLATES, RoutineTemplate } from '@/types/workout';
 
 // Get Supabase client
 const supabase = getSupabaseClient();
@@ -27,6 +27,7 @@ export interface WorkoutSettings {
   showComboDisplay: boolean;
   enableWakeLock: boolean;
   countdownSeconds: number;
+  customRoutines: RoutineTemplate[];
 }
 
 const DEFAULT_ROUND_CONFIGS: RoundConfig[] = [
@@ -44,6 +45,7 @@ const DEFAULT_SETTINGS: WorkoutSettings = {
   showComboDisplay: true,
   enableWakeLock: true,
   countdownSeconds: 3,
+  customRoutines: [],
 };
 
 interface SettingsContextType {
@@ -52,6 +54,8 @@ interface SettingsContextType {
   updateRoundConfig: (roundNumber: number, config: Partial<RoundConfig>) => Promise<void>;
   addRoundConfig: (config: RoundConfig) => Promise<void>;
   removeRoundConfig: (roundNumber: number) => Promise<void>;
+  saveCustomRoutine: (name: string, focus?: string) => Promise<RoutineTemplate>;
+  deleteCustomRoutine: (routineId: string) => Promise<void>;
   saveToSupabase: () => Promise<void>;
   loadFromSupabase: () => Promise<void>;
 }
@@ -129,6 +133,45 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
     }));
   };
 
+  const saveCustomRoutine = async (name: string, focus?: string) => {
+    const trimmedName = name.trim();
+    if (!trimmedName) {
+      throw new Error('Workout name is required');
+    }
+
+    const routine: RoutineTemplate = {
+      id: `custom-${Date.now()}`,
+      name: trimmedName,
+      focus: focus?.trim() || 'Custom solo training workout',
+      rounds: settings.rounds,
+      roundDuration: settings.roundDuration,
+      restDuration: settings.restDuration,
+      intensityId: settings.intensityId,
+      roundConfigs: settings.roundConfigs.map(round => ({
+        ...round,
+        combos: [...round.combos],
+      })),
+      isCustom: true,
+    };
+
+    setSettings(prev => ({
+      ...prev,
+      customRoutines: [
+        routine,
+        ...(prev.customRoutines || []).filter(existing => existing.name !== routine.name),
+      ],
+    }));
+
+    return routine;
+  };
+
+  const deleteCustomRoutine = async (routineId: string) => {
+    setSettings(prev => ({
+      ...prev,
+      customRoutines: (prev.customRoutines || []).filter(routine => routine.id !== routineId),
+    }));
+  };
+
   const saveToSupabase = async () => {
     if (!user) return;
     
@@ -180,6 +223,8 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
     updateRoundConfig,
     addRoundConfig,
     removeRoundConfig,
+    saveCustomRoutine,
+    deleteCustomRoutine,
     saveToSupabase,
     loadFromSupabase,
   };

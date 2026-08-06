@@ -28,6 +28,7 @@ export interface RoutineTemplate {
     combos: string[];
     duration?: number;
   }[];
+  isCustom?: boolean;
 }
 
 export const INTENSITY_PRESETS: Record<string, IntensityPreset> = {
