@@ -4,8 +4,8 @@ import type { Metadata, Viewport } from 'next';
 import { SettingsProvider } from '@/contexts/SettingsContext';
 
 export const metadata: Metadata = {
-  title: 'Boxing Timer',
-  description: 'Boxing workout timer with round-specific settings',
+  title: 'MMA Training Timer',
+  description: 'MMA workout timer with routine setup and round-specific callouts',
   manifest: '/manifest.json',
   appleWebApp: {
     capable: true,

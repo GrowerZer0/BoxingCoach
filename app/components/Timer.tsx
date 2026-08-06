@@ -6,6 +6,7 @@ import { useTimer } from '@/hooks/useTimer';
 import { useWakeLock } from '@/hooks/useWakeLock';
 import { useSettings } from '@/contexts/SettingsContext';
 import { useAudio } from '@/hooks/useAudio';
+import { MOVE_CATEGORY_COLORS, MOVE_CATEGORY_LABELS } from '@/types/workout';
 
 interface TimerProps {
   onWorkoutStart?: () => Promise<string | void>;
@@ -19,6 +20,7 @@ interface TimerProps {
   selectedVoiceName?: string;
   genderFilter?: string;
   callouts?: any;
+  workoutName?: string;
 }
 
 export default function Timer(props: TimerProps) {
@@ -37,7 +39,7 @@ export default function Timer(props: TimerProps) {
     isRunning,
     isPaused,
     currentCallout,
-    isDefensive,
+    currentCalloutCategory,
     startTimer,
     pauseTimer,
     resumeTimer,
@@ -255,18 +257,12 @@ export default function Timer(props: TimerProps) {
 
         {/* Callout Display */}
         {currentCallout && (config.phase === 'round' || config.phase === 'rest') && (
-          <div className={`mb-6 p-4 rounded-lg transition-all duration-300 transform ${
-            isDefensive 
-              ? 'bg-blue-500/20 border border-blue-500/50' 
-              : 'bg-yellow-500/20 border border-yellow-500/50'
-          }`}>
-            <div className={`text-3xl font-bold ${
-              isDefensive ? 'text-blue-400' : 'text-yellow-400'
-            }`}>
+          <div className={`mb-6 p-4 rounded-lg transition-all duration-300 transform ${MOVE_CATEGORY_COLORS[currentCalloutCategory].panel}`}>
+            <div className={`text-3xl font-bold ${MOVE_CATEGORY_COLORS[currentCalloutCategory].text}`}>
               {currentCallout}
             </div>
             <div className="text-xs text-gray-500 mt-1">
-              {isDefensive ? '🛡️ Defense' : '🥊 Combo'}
+              {MOVE_CATEGORY_LABELS[currentCalloutCategory]}
             </div>
           </div>
         )}

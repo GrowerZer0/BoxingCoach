@@ -2,15 +2,25 @@
 'use client';
 
 import React, { useState } from 'react';
-import { useSettings, RoundConfig } from '@/contexts/SettingsContext';
+import { useSettings } from '@/contexts/SettingsContext';
 import { useAudio } from '@/hooks/useAudio';
-import { INTENSITY_PRESETS, ALL_MOVES, isDefensiveMove, generateFightScenario } from '@/types/workout';
+import {
+  ALL_MOVES,
+  INTENSITY_PRESETS,
+  MOVE_CATEGORY_COLORS,
+  MOVE_CATEGORY_LABELS,
+  MoveCategory,
+  formatMoveForDisplay,
+  generateFightScenario,
+  getMoveCategory,
+  getMoveLabel,
+} from '@/types/workout';
 
 export default function Settings() {
   const { settings, updateSettings, updateRoundConfig, addRoundConfig, removeRoundConfig } = useSettings();
   const audio = useAudio();
   const [activeTab, setActiveTab] = useState<'general' | 'rounds'>('general');
-  const [selectedIntensity, setSelectedIntensity] = useState(settings.intensityId || 'moderate');
+  const [selectedIntensity, setSelectedIntensity] = useState(settings.intensityId || 'counter');
 
   const handleIntensitySelect = (intensityId: string) => {
     audio.hapticFeedback(10);
@@ -21,7 +31,6 @@ export default function Settings() {
   const handleAddRound = () => {
     audio.hapticFeedback(10);
     const newRoundNumber = settings.roundConfigs.length + 1;
-    // Create a fight scenario for the new round
     const scenario = generateFightScenario(newRoundNumber, selectedIntensity);
     addRoundConfig({
       roundNumber: newRoundNumber,
@@ -154,39 +163,39 @@ export default function Settings() {
 
           {/* Intensity Selection */}
           <div className="mt-4">
-  <label className="block text-sm font-medium text-gray-300 mb-2">
-    Intensity Level
-  </label>
-  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-  {Object.values(INTENSITY_PRESETS).map((preset) => (
-  <button
-    key={preset.id}
-    onClick={() => handleIntensitySelect(preset.id)}
-    className={`p-4 rounded-lg border-2 transition-all text-left ${
-      selectedIntensity === preset.id
-        ? 'border-blue-500 bg-blue-500/10'
-        : 'border-gray-700 bg-gray-800 hover:border-gray-500'
-    }`}
-  >
-    <div className="flex items-center gap-3">
-      <span className="text-3xl">{preset.icon}</span>
-      <div>
-        <h4 className="font-semibold text-white">{preset.name}</h4>
-        <p className="text-xs text-gray-400">{preset.description}</p>
-        <div className="flex gap-3 mt-1 text-xs text-gray-500">
-          <span>⏱️ {preset.minDelay}-{preset.maxDelay}s</span>
-          <span>🥊 ~{preset.punchesPerRound} punches</span>
-          <span>🛡️ {Math.round(preset.defensiveChance * 100)}% defense</span>
-        </div>
-      </div>
-    </div>
-    {selectedIntensity === preset.id && (
-      <div className="mt-2 text-blue-400 text-sm">✓ Selected</div>
-    )}
-  </button>
-))}
-  </div>
-</div>
+            <label className="block text-sm font-medium text-gray-300 mb-2">
+              Intensity Level
+            </label>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              {Object.values(INTENSITY_PRESETS).map((preset) => (
+                <button
+                  key={preset.id}
+                  onClick={() => handleIntensitySelect(preset.id)}
+                  className={`p-4 rounded-lg border-2 transition-all text-left ${
+                    selectedIntensity === preset.id
+                      ? 'border-blue-500 bg-blue-500/10'
+                      : 'border-gray-700 bg-gray-800 hover:border-gray-500'
+                  }`}
+                >
+                  <div className="flex items-center gap-3">
+                    <span className="text-3xl">{preset.icon}</span>
+                    <div>
+                      <h4 className="font-semibold text-white">{preset.name}</h4>
+                      <p className="text-xs text-gray-400">{preset.description}</p>
+                      <div className="flex gap-3 mt-1 text-xs text-gray-500">
+                        <span>⏱️ {preset.minDelay}-{preset.maxDelay}s</span>
+                        <span>🥊 ~{preset.punchesPerRound} punches</span>
+                        <span>🛡️ {Math.round(preset.defensiveChance * 100)}% defense</span>
+                      </div>
+                    </div>
+                  </div>
+                  {selectedIntensity === preset.id && (
+                    <div className="mt-2 text-blue-400 text-sm">✓ Selected</div>
+                  )}
+                </button>
+              ))}
+            </div>
+          </div>
 
           <div className="flex items-center">
             <input
@@ -226,9 +235,11 @@ export default function Settings() {
       {activeTab === 'rounds' && (
         <div className="space-y-6">
           {settings.roundConfigs.map((config) => {
-            // Separate offensive and defensive moves for display
-            const offensiveMoves = config.combos.filter(m => !isDefensiveMove(m));
-            const defensiveMoves = config.combos.filter(m => isDefensiveMove(m));
+            const categoryCounts = config.combos.reduce<Record<MoveCategory, number>>((counts, move) => {
+              const category = getMoveCategory(move);
+              counts[category] += 1;
+              return counts;
+            }, { striking: 0, defense: 0, clinch: 0, takedown: 0, ground: 0 });
             
             return (
               <div key={config.roundNumber} className="bg-gray-800 p-4 rounded-lg border border-gray-700">
@@ -242,9 +253,12 @@ export default function Settings() {
                         Round {config.roundNumber}
                       </span>
                     </div>
-                    <div className="flex gap-2 mt-1">
-                      <span className="text-xs text-green-400">🥊 {offensiveMoves.length} offensive</span>
-                      <span className="text-xs text-blue-400">🛡️ {defensiveMoves.length} defensive</span>
+                    <div className="flex gap-2 mt-1 flex-wrap">
+                      <span className="text-xs text-green-400">{categoryCounts.striking} striking</span>
+                      <span className="text-xs text-blue-400">{categoryCounts.defense} defense</span>
+                      <span className="text-xs text-cyan-300">{categoryCounts.clinch} clinch</span>
+                      <span className="text-xs text-orange-300">{categoryCounts.takedown} takedowns</span>
+                      <span className="text-xs text-purple-300">{categoryCounts.ground} ground</span>
                     </div>
                   </div>
                   <div className="flex gap-2">
@@ -288,56 +302,32 @@ export default function Settings() {
                 {/* Move Selection */}
                 <div>
                   <label className="block text-sm font-medium text-gray-300 mb-2">
-                    Select Moves (Offensive & Defensive)
+                    Select Moves
                   </label>
                   
-                  {/* Offensive Moves */}
-                  <div className="mb-3">
-                    <div className="text-xs text-gray-500 mb-1 flex items-center gap-2">
-                      <span>🥊 Offensive</span>
-                      <span className="text-gray-600">|</span>
-                      <span className="text-gray-600">Click to toggle</span>
+                  {(Object.keys(ALL_MOVES) as MoveCategory[]).map((category) => (
+                    <div key={category} className="mb-3">
+                      <div className="text-xs text-gray-500 mb-1 flex items-center gap-2">
+                        <span>{MOVE_CATEGORY_LABELS[category]}</span>
+                        {category === 'striking' && <span className="text-gray-600">1-8 boxing convention</span>}
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        {ALL_MOVES[category].map((move) => (
+                          <button
+                            key={move}
+                            onClick={() => toggleMove(config.roundNumber, move)}
+                            className={`px-3 py-1 rounded-full text-sm font-medium transition-all ${
+                              config.combos.includes(move)
+                                ? `${MOVE_CATEGORY_COLORS[category].active} scale-100`
+                                : `${MOVE_CATEGORY_COLORS[category].idle} hover:scale-105`
+                            }`}
+                          >
+                            {getMoveLabel(move)}
+                          </button>
+                        ))}
+                      </div>
                     </div>
-                    <div className="flex flex-wrap gap-2">
-                      {ALL_MOVES.offensive.map((move) => (
-                        <button
-                          key={move}
-                          onClick={() => toggleMove(config.roundNumber, move)}
-                          className={`px-3 py-1 rounded-full text-sm font-medium transition-all ${
-                            config.combos.includes(move)
-                              ? 'bg-green-600 text-white scale-100'
-                              : 'bg-gray-700 text-gray-400 hover:bg-gray-600 hover:scale-105'
-                          }`}
-                        >
-                          {move}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-
-                  {/* Defensive Moves */}
-                  <div>
-                    <div className="text-xs text-gray-500 mb-1 flex items-center gap-2">
-                      <span>🛡️ Defensive</span>
-                      <span className="text-gray-600">|</span>
-                      <span className="text-gray-600">Click to toggle</span>
-                    </div>
-                    <div className="flex flex-wrap gap-2">
-                      {ALL_MOVES.defensive.map((move) => (
-                        <button
-                          key={move}
-                          onClick={() => toggleMove(config.roundNumber, move)}
-                          className={`px-3 py-1 rounded-full text-sm font-medium transition-all ${
-                            config.combos.includes(move)
-                              ? 'bg-blue-600 text-white scale-100'
-                              : 'bg-gray-700 text-gray-400 hover:bg-gray-600 hover:scale-105'
-                          }`}
-                        >
-                          {move}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
+                  ))}
                 </div>
 
                 {/* Current Combo Display */}
@@ -349,12 +339,10 @@ export default function Settings() {
                         <span
                           key={index}
                           className={`px-2 py-1 rounded text-sm font-medium ${
-                            isDefensiveMove(move)
-                              ? 'bg-blue-500/20 text-blue-300'
-                              : 'bg-green-500/20 text-green-300'
+                            `${MOVE_CATEGORY_COLORS[getMoveCategory(move)].panel} ${MOVE_CATEGORY_COLORS[getMoveCategory(move)].text}`
                           }`}
                         >
-                          {move}
+                          {formatMoveForDisplay(move)}
                           {index < config.combos.length - 1 && (
                             <span className="text-gray-600 mx-1">→</span>
                           )}
@@ -377,11 +365,10 @@ export default function Settings() {
           <div className="mt-4 p-4 bg-gray-800 rounded-lg border border-gray-700">
             <h4 className="text-sm font-medium text-gray-300 mb-2">💡 How it works:</h4>
             <ul className="text-sm text-gray-400 space-y-1">
-              <li>• <span className="text-green-400">Green</span> = Offensive moves (punches)</li>
-              <li>• <span className="text-blue-400">Blue</span> = Defensive moves (slips, rolls, blocks)</li>
-              <li>• Click any move to add/remove it from the round</li>
-              <li>• Use <span className="text-purple-400">Generate</span> for an intelligent fight scenario</li>
-              <li>• The timer will randomly call out moves from your selected list</li>
+              <li>• Striking uses the traditional 1-8 boxing convention.</li>
+              <li>• Defense, clinch, takedown, and ground work use normal technique names.</li>
+              <li>• Use <span className="text-purple-400">Generate</span> to seed a practical MMA round.</li>
+              <li>• The timer randomly calls from each round's selected list.</li>
             </ul>
           </div>
         </div>

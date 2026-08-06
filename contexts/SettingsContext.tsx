@@ -4,6 +4,7 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { getSupabaseClient } from '@/lib/supabase';
 import { useAuth } from '@/lib/auth';
+import { ROUTINE_TEMPLATES } from '@/types/workout';
 
 // Get Supabase client
 const supabase = getSupabaseClient();
@@ -29,21 +30,7 @@ export interface WorkoutSettings {
 }
 
 const DEFAULT_ROUND_CONFIGS: RoundConfig[] = [
-  { 
-    roundNumber: 1, 
-    name: 'Round 1 - Feeling Out', 
-    combos: ['Jab', 'Cross', 'Slip Right'],
-  },
-  { 
-    roundNumber: 2, 
-    name: 'Round 2 - Building Rhythm', 
-    combos: ['Jab-Cross', 'Left Hook', 'Roll Right', 'Cross'],
-  },
-  { 
-    roundNumber: 3, 
-    name: 'Round 3 - Pressure', 
-    combos: ['Jab-Cross-Hook', 'Slip Left-Cross', 'Roll Right-Jab-Cross'],
-  },
+  ...ROUTINE_TEMPLATES[0].roundConfigs,
 ];
 
 const DEFAULT_SETTINGS: WorkoutSettings = {
@@ -107,7 +94,13 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
       console.warn(`Invalid intensity: ${newSettings.intensityId}, using 'counter'`);
       newSettings.intensityId = 'counter';
     }
-    setSettings(prev => ({ ...prev, ...newSettings }));
+    setSettings(prev => {
+      const next = { ...prev, ...newSettings };
+      if (newSettings.rounds && next.roundConfigs.length > newSettings.rounds) {
+        next.roundConfigs = next.roundConfigs.slice(0, newSettings.rounds);
+      }
+      return next;
+    });
   };
 
   const updateRoundConfig = async (roundNumber: number, config: Partial<RoundConfig>) => {

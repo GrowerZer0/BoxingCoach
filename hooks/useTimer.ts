@@ -1,8 +1,16 @@
-// hooks/useTimer.ts - Fixed event timing
+// hooks/useTimer.ts - Use ref for phase exclusively
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { useAudio } from './useAudio';
 import { useSettings } from '@/contexts/SettingsContext';
-import { INTENSITY_PRESETS, getRandomDelay, isDefensiveMove } from '@/types/workout';
+import {
+  INTENSITY_PRESETS,
+  MoveCategory,
+  formatMoveForDisplay,
+  formatMoveForSpeech,
+  generateFightScenario,
+  getMoveCategory,
+  getRandomDelay,
+} from '@/types/workout';
 
 export type TimerPhase = 'idle' | 'countdown' | 'round' | 'rest' | 'finished';
 
@@ -16,13 +24,6 @@ export interface TimerConfig {
   countdownTotal: number;
   intensityId: string;
 }
-
-// Combo lists for each intensity level
-const COMBOS = {
-  simple: ['Jab', 'Cross', 'Jab-Cross', 'Jab-Jab', 'Cross-Hook', 'Left Hook', 'Right Hook'],
-  moderate: ['Jab-Cross-Hook', 'Jab-Jab-Cross', 'Cross-Hook-Cross', 'Jab-Cross-Uppercut', 'Hook-Cross-Hook', 'Double Jab-Cross', 'Jab-Hook-Cross'],
-  complex: ['Jab-Cross-Hook-Cross', 'Jab-Hook-Cross-Hook', 'Cross-Uppercut-Hook-Cross', 'Jab-Cross-Uppercut-Hook', 'Double Jab-Cross-Hook', 'Jab-Cross-Hook-Uppercut-Hook'],
-};
 
 export function useTimer(initialConfig: Partial<TimerConfig> = {}) {
   const { settings } = useSettings();
@@ -44,20 +45,36 @@ export function useTimer(initialConfig: Partial<TimerConfig> = {}) {
   const [isRunning, setIsRunning] = useState(false);
   const [isPaused, setIsPaused] = useState(false);
   const [currentCallout, setCurrentCallout] = useState<string>('');
-  const [isDefensive, setIsDefensive] = useState(false);
-  
+  const [currentCalloutCategory, setCurrentCalloutCategory] = useState<MoveCategory>('striking');
+
   const timerRef = useRef<NodeJS.Timeout | null>(null);
   const calloutTimerRef = useRef<NodeJS.Timeout | null>(null);
   const countdownRef = useRef<NodeJS.Timeout | null>(null);
   const eventsRef = useRef<{ time: number; action: () => void; triggered: boolean }[]>([]);
   const calloutScheduledRef = useRef(false);
   const isRoundActiveRef = useRef(false);
+  const isFirstRoundRef = useRef(true);
+
+  // Ref to track the current phase - this is the source of truth for callouts
+  const currentPhaseRef = useRef<TimerPhase>('idle');
+  const currentRoundRef = useRef<number>(1);
+  const timeRemainingRef = useRef<number>(config.roundDuration);
+
+  // Update refs when state changes
+  useEffect(() => {
+    currentPhaseRef.current = config.phase;
+    currentRoundRef.current = config.currentRound;
+  }, [config.phase, config.currentRound]);
+
+  useEffect(() => {
+    timeRemainingRef.current = timeRemaining;
+  }, [timeRemaining]);
 
   // Play countdown beep pattern
-  const playCountdownBeep = useCallback((second: number) => {
-    console.log(`[Timer] Countdown: ${second}`);
-    
-    if (second === 10) {
+  const playCountdownBeep = useCallback((second: number, isFirstRound: boolean) => {
+    console.log(`[Timer] Countdown: ${second} (first round: ${isFirstRound})`);
+
+    if (second === 10 && isFirstRound) {
       audio.playBeep();
       audio.hapticFeedback(15);
       if (audio.speakText) {
@@ -79,71 +96,101 @@ export function useTimer(initialConfig: Partial<TimerConfig> = {}) {
     }
   }, [audio]);
 
-  // Schedule next callout
+  // Get available moves for the current round - using ref for current round
+  const getAvailableMoves = useCallback(() => {
+    const roundNum = currentRoundRef.current;
+    console.log('[Timer] Getting available moves for round:', roundNum);
+
+    const currentRoundConfig = settings?.roundConfigs?.find(
+      (rc: { roundNumber: number }) => rc.roundNumber === roundNum
+    );
+
+    let availableMoves: string[] = currentRoundConfig?.combos || [];
+
+    if (availableMoves.length === 0) {
+      console.log('[Timer] No moves configured, using default combos');
+      availableMoves = generateFightScenario(roundNum, config.intensityId);
+    }
+
+    console.log('[Timer] Available moves:', availableMoves);
+    return availableMoves;
+  }, [settings?.roundConfigs, config.intensityId]);
+
+  // Schedule next callout - Using ref for phase
   const scheduleNextCallout = useCallback(() => {
+    console.log('[Timer] scheduleNextCallout called');
+    console.log('[Timer] Current ref phase:', currentPhaseRef.current);
+    console.log('[Timer] Current timeRemaining:', timeRemainingRef.current);
+
     if (calloutTimerRef.current) {
       clearTimeout(calloutTimerRef.current);
       calloutTimerRef.current = null;
     }
 
-    if (!isRunning || isPaused || config.phase !== 'round' || !isRoundActiveRef.current) {
+    // Use the ref for phase - this is the source of truth
+    const phase = currentPhaseRef.current;
+    const isRound = phase === 'round';
+    const remaining = timeRemainingRef.current;
+
+    if (!isRound || isPaused || remaining <= 4) {
+      console.log('[Timer] Not scheduling - conditions not met (phase:', phase, ')');
       calloutScheduledRef.current = false;
       return;
     }
 
-    if (timeRemaining <= 4) { // Stop callouts when 4 seconds left (before 3-2-1 beeps)
-      calloutScheduledRef.current = false;
-      return;
-    }
-
-    const currentRoundConfig = settings?.roundConfigs?.find(
-      (rc: { roundNumber: number }) => rc.roundNumber === config.currentRound
-    );
-    
-    let availableMoves: string[] = currentRoundConfig?.combos || [];
-    
+    const availableMoves = getAvailableMoves();
     if (availableMoves.length === 0) {
-      const intensity = INTENSITY_PRESETS[config.intensityId] || INTENSITY_PRESETS.counter;
-      availableMoves = COMBOS[intensity.comboComplexity] || COMBOS.moderate;
+      console.warn('[Timer] No available moves!');
+      calloutScheduledRef.current = false;
+      return;
     }
 
     const intensity = INTENSITY_PRESETS[config.intensityId] || INTENSITY_PRESETS.counter;
-    
+
     const baseDelay = getRandomDelay(intensity.minDelay, intensity.maxDelay);
     const jitter = Math.random() * 2 - 1;
     const delay = Math.max(1.5, baseDelay + jitter) * 1000;
 
+    console.log(`[Timer] Scheduling next callout in ${delay}ms`);
+
     calloutScheduledRef.current = true;
 
     calloutTimerRef.current = setTimeout(() => {
-      if (!isRunning || isPaused || config.phase !== 'round' || !isRoundActiveRef.current || timeRemaining <= 4) {
+      console.log('[Timer] Callout timer fired!');
+
+      const phaseNow = currentPhaseRef.current;
+      const remainingNow = timeRemainingRef.current;
+
+      if (phaseNow !== 'round' || isPaused || remainingNow <= 4) {
+        console.log('[Timer] Invalid state for callout');
         calloutScheduledRef.current = false;
         return;
       }
 
       const randomMove = availableMoves[Math.floor(Math.random() * availableMoves.length)];
-      
-      if (randomMove) {
-        const isDefensiveCall = isDefensiveMove(randomMove);
-        setIsDefensive(isDefensiveCall);
-        setCurrentCallout(randomMove);
-        
-        if (audio.speakText) {
-          audio.speakText(randomMove, 'high');
-        }
-        audio.hapticFeedback([15, 30, 15]);
+      console.log('[Timer] Selected raw callout:', randomMove);
+
+      const category = getMoveCategory(randomMove);
+      setCurrentCalloutCategory(category);
+      const displayCallout = formatMoveForDisplay(randomMove);
+      setCurrentCallout(displayCallout);
+
+      console.log(`[Timer] Playing callout: ${displayCallout} (${category})`);
+
+      if (audio.speakText) {
+        audio.speakText(formatMoveForSpeech(randomMove), 'high');
       }
-      
+      audio.hapticFeedback([15, 30, 15]);
+
       calloutScheduledRef.current = false;
       scheduleNextCallout();
     }, delay);
-  }, [isRunning, isPaused, config.phase, config.intensityId, config.currentRound, timeRemaining, audio, settings?.roundConfigs]);
+  }, [isPaused, config.intensityId, audio, getAvailableMoves]);
 
-  // Schedule events for a round - CORRECT timing
+  // Schedule events for a round
   const scheduleRoundEvents = useCallback((duration: number) => {
     const events: { time: number; action: () => void; triggered: boolean }[] = [];
-    
-    // HALFWAY - at 50% of duration (when timeRemaining = duration/2)
+
     const halfwayTime = Math.floor(duration / 2);
     events.push({
       time: halfwayTime,
@@ -156,8 +203,7 @@ export function useTimer(initialConfig: Partial<TimerConfig> = {}) {
       },
       triggered: false
     });
-    
-    // 10 SECONDS LEFT - when timeRemaining = 10 (NOT duration - 10!)
+
     if (duration > 10) {
       events.push({
         time: 10,
@@ -171,8 +217,7 @@ export function useTimer(initialConfig: Partial<TimerConfig> = {}) {
         triggered: false
       });
     }
-    
-    // 3-2-1 countdown at END of round (when timeRemaining = 3, 2, 1)
+
     for (let i = 3; i >= 1; i--) {
       const count = i;
       events.push({
@@ -185,8 +230,7 @@ export function useTimer(initialConfig: Partial<TimerConfig> = {}) {
         triggered: false
       });
     }
-    
-    // Final bell at the end of the round (when timeRemaining = 0)
+
     events.push({
       time: 0,
       action: () => {
@@ -196,51 +240,68 @@ export function useTimer(initialConfig: Partial<TimerConfig> = {}) {
       },
       triggered: false
     });
-    
+
     return events;
   }, [audio]);
 
   const beginRound = useCallback(() => {
-    console.log(`[Timer] Beginning round ${config.currentRound}`);
-    setConfig(prev => ({ ...prev, phase: 'round' }));
+    const roundNum = currentRoundRef.current;
+    console.log(`[Timer] 🔵 Beginning round ${roundNum}`);
+
+    // Update the ref FIRST - this is the source of truth
+    currentPhaseRef.current = 'round';
+
+    // Then update state
+    setConfig((prev) => {
+      console.log('[Timer] Setting phase from', prev.phase, 'to round');
+      return {
+        ...prev,
+        phase: 'round',
+        currentRound: roundNum
+      };
+    });
+
     setTimeRemaining(config.roundDuration);
+    timeRemainingRef.current = config.roundDuration;
     setCurrentCallout('');
     calloutScheduledRef.current = false;
     isRoundActiveRef.current = true;
-    
+
     if (calloutTimerRef.current) {
       clearTimeout(calloutTimerRef.current);
       calloutTimerRef.current = null;
     }
-    
+
     // Schedule events for this round
     eventsRef.current = scheduleRoundEvents(config.roundDuration);
     let currentTime = config.roundDuration;
-    
+
     if (timerRef.current) {
       clearInterval(timerRef.current);
     }
-    
+
     timerRef.current = setInterval(() => {
       currentTime--;
       setTimeRemaining(currentTime);
-      
-      // Check for scheduled events (Halfway, 10s left, 3-2-1 beeps, bell)
+      timeRemainingRef.current = currentTime;
+
+      // Check for scheduled events
       eventsRef.current.forEach(event => {
         if (event.time === currentTime && !event.triggered) {
+          console.log(`[Timer] Event triggered at time ${currentTime}`);
           event.action();
           event.triggered = true;
         }
       });
-      
-      // Start callouts after first 2 seconds of round, stop at 4 seconds remaining
-      if (currentTime <= config.roundDuration - 2 && currentTime > 4) {
+
+      // Start callouts after first 3 seconds of round
+      if (currentTime <= config.roundDuration - 3 && currentTime > 4) {
         if (!calloutScheduledRef.current && !calloutTimerRef.current) {
+          console.log('[Timer] Starting callout scheduling');
           scheduleNextCallout();
         }
       }
-      
-      // Round ended
+
       if (currentTime <= 0) {
         console.log('[Timer] Round ended');
         if (timerRef.current) {
@@ -256,13 +317,50 @@ export function useTimer(initialConfig: Partial<TimerConfig> = {}) {
         handleRoundEnd();
       }
     }, 1000);
-  }, [config.roundDuration, config.currentRound, scheduleRoundEvents, scheduleNextCallout]);
+  }, [config.roundDuration, scheduleRoundEvents, scheduleNextCallout]);
+
+  // FIX (Bug 2): startCountdown moved above handleRoundEnd so handleRoundEnd
+  // can safely list it as a dependency instead of capturing a stale closure.
+  const startCountdown = useCallback((isFirstRound: boolean = true) => {
+    console.log(`[Timer] Starting 10-second countdown (first round: ${isFirstRound})`);
+    currentPhaseRef.current = 'countdown';
+    setConfig(prev => ({
+      ...prev,
+      phase: 'countdown',
+      countdown: 10,
+      countdownTotal: 10
+    }));
+
+    let count = 10;
+
+    if (countdownRef.current) {
+      clearInterval(countdownRef.current);
+      countdownRef.current = null;
+    }
+
+    countdownRef.current = setInterval(() => {
+      count--;
+      setConfig(prev => ({ ...prev, countdown: count }));
+
+      playCountdownBeep(count, isFirstRound);
+
+      if (count <= 0) {
+        console.log('[Timer] Countdown complete!');
+        if (countdownRef.current) {
+          clearInterval(countdownRef.current);
+          countdownRef.current = null;
+        }
+        beginRound();
+      }
+    }, 1000);
+  }, [audio, beginRound, playCountdownBeep]);
 
   const handleRoundEnd = useCallback(() => {
     audio.playBell();
-    
-    if (config.currentRound >= config.rounds) {
+
+    if (currentRoundRef.current >= config.rounds) {
       console.log('[Timer] Workout complete!');
+      currentPhaseRef.current = 'finished';
       setConfig(prev => ({ ...prev, phase: 'finished' }));
       setIsRunning(false);
       setCurrentCallout('');
@@ -277,92 +375,65 @@ export function useTimer(initialConfig: Partial<TimerConfig> = {}) {
       }
       return;
     }
-    
-    // Start rest
-    console.log(`[Timer] Starting rest for round ${config.currentRound + 1}`);
-    setConfig(prev => ({ 
-      ...prev, 
+
+    const nextRound = currentRoundRef.current + 1;
+    console.log(`[Timer] Starting rest for round ${nextRound}`);
+    currentPhaseRef.current = 'rest';
+    setConfig(prev => ({
+      ...prev,
       phase: 'rest',
-      currentRound: prev.currentRound + 1
+      currentRound: nextRound
     }));
+    currentRoundRef.current = nextRound;
     setTimeRemaining(config.restDuration);
+    timeRemainingRef.current = config.restDuration;
     setCurrentCallout('💪 Rest');
-    
+
     eventsRef.current = scheduleRoundEvents(config.restDuration);
     let restTime = config.restDuration;
-    
+
     if (timerRef.current) {
       clearInterval(timerRef.current);
     }
-    
+
     timerRef.current = setInterval(() => {
       restTime--;
       setTimeRemaining(restTime);
-      
+      timeRemainingRef.current = restTime;
+
       eventsRef.current.forEach(event => {
         if (event.time === restTime && !event.triggered) {
           event.action();
           event.triggered = true;
         }
       });
-      
+
       if (restTime <= 0) {
         console.log('[Timer] Rest ended, starting next round');
         if (timerRef.current) {
           clearInterval(timerRef.current);
           timerRef.current = null;
         }
-        // Start countdown for next round
-        startCountdown();
+        startCountdown(false);
       }
     }, 1000);
-  }, [config.currentRound, config.rounds, config.restDuration, audio, beginRound, scheduleRoundEvents]);
-
-  // 10-second countdown with beep patterns
-  const startCountdown = useCallback(() => {
-    console.log('[Timer] Starting 10-second countdown');
-    setConfig(prev => ({ 
-      ...prev, 
-      phase: 'countdown', 
-      countdown: 10,
-      countdownTotal: 10
-    }));
-    
-    let count = 10;
-    
-    if (countdownRef.current) {
-      clearInterval(countdownRef.current);
-      countdownRef.current = null;
-    }
-    
-    countdownRef.current = setInterval(() => {
-      count--;
-      setConfig(prev => ({ ...prev, countdown: count }));
-      
-      playCountdownBeep(count);
-      
-      if (count <= 0) {
-        console.log('[Timer] Countdown complete!');
-        if (countdownRef.current) {
-          clearInterval(countdownRef.current);
-          countdownRef.current = null;
-        }
-        beginRound();
-      }
-    }, 1000);
-  }, [audio, beginRound, playCountdownBeep]);
+    // FIX (Bug 2): startCountdown is now declared before this callback and is
+    // included in the dependency array so this never runs a stale closure.
+  }, [config.rounds, config.restDuration, audio, scheduleRoundEvents, startCountdown]);
 
   const startTimer = useCallback(async () => {
     if (isRunning) return;
-    
+
     console.log('[Timer] Starting timer with 10-second countdown');
     setIsRunning(true);
     setIsPaused(false);
     setCurrentCallout('');
     calloutScheduledRef.current = false;
     isRoundActiveRef.current = false;
-    
-    startCountdown();
+    isFirstRoundRef.current = true;
+    currentRoundRef.current = 1;
+
+    startCountdown(true);
   }, [isRunning, startCountdown]);
 
   const pauseTimer = useCallback(() => {
@@ -388,20 +459,22 @@ export function useTimer(initialConfig: Partial<TimerConfig> = {}) {
     if (!isPaused) return;
     console.log('[Timer] Resumed');
     setIsPaused(false);
-    
-    if (config.phase === 'countdown') {
+
+    if (config.phase === 'countdown' || currentPhaseRef.current === 'countdown') {
       if (countdownRef.current) {
         clearInterval(countdownRef.current);
         countdownRef.current = null;
       }
-      
+
       let count = config.countdown;
+      const isFirstRound = config.currentRound === 1;
+
       countdownRef.current = setInterval(() => {
         count--;
         setConfig(prev => ({ ...prev, countdown: count }));
-        
-        playCountdownBeep(count);
-        
+
+        playCountdownBeep(count, isFirstRound);
+
         if (count <= 0) {
           console.log('[Timer] Countdown complete!');
           if (countdownRef.current) {
@@ -413,35 +486,37 @@ export function useTimer(initialConfig: Partial<TimerConfig> = {}) {
       }, 1000);
       return;
     }
-    
-    if (config.phase === 'round') {
+
+    if (config.phase === 'round' || currentPhaseRef.current === 'round') {
+      currentPhaseRef.current = 'round';
       isRoundActiveRef.current = true;
-      
+
       if (timerRef.current) {
         clearInterval(timerRef.current);
         timerRef.current = null;
       }
-      
+
       eventsRef.current = scheduleRoundEvents(config.roundDuration);
       let currentTime = timeRemaining;
-      
+
       timerRef.current = setInterval(() => {
         currentTime--;
         setTimeRemaining(currentTime);
-        
+        timeRemainingRef.current = currentTime;
+
         eventsRef.current.forEach(event => {
           if (event.time === currentTime && !event.triggered) {
             event.action();
             event.triggered = true;
           }
         });
-        
-        if (currentTime <= config.roundDuration - 2 && currentTime > 4) {
+
+        if (currentTime <= config.roundDuration - 3 && currentTime > 4) {
           if (!calloutScheduledRef.current && !calloutTimerRef.current) {
             scheduleNextCallout();
           }
         }
-        
+
         if (currentTime <= 0) {
           if (timerRef.current) {
             clearInterval(timerRef.current);
@@ -451,12 +526,66 @@ export function useTimer(initialConfig: Partial<TimerConfig> = {}) {
           handleRoundEnd();
         }
       }, 1000);
-      
+
       if (!calloutScheduledRef.current && !calloutTimerRef.current) {
         scheduleNextCallout();
       }
+      return;
     }
-  }, [isPaused, config.phase, config.countdown, config.roundDuration, timeRemaining, audio, scheduleNextCallout, scheduleRoundEvents, handleRoundEnd, beginRound, playCountdownBeep]);
+
+    // FIX (Bug 1): previously there was no branch for the 'rest' phase, so
+    // resuming a paused rest period flipped isPaused back to false but never
+    // restarted the interval — the rest countdown just froze forever.
+    if (config.phase === 'rest' || currentPhaseRef.current === 'rest') {
+      currentPhaseRef.current = 'rest';
+
+      if (timerRef.current) {
+        clearInterval(timerRef.current);
+        timerRef.current = null;
+      }
+
+      eventsRef.current = scheduleRoundEvents(config.restDuration);
+      let restTime = timeRemaining;
+
+      timerRef.current = setInterval(() => {
+        restTime--;
+        setTimeRemaining(restTime);
+        timeRemainingRef.current = restTime;
+
+        eventsRef.current.forEach(event => {
+          if (event.time === restTime && !event.triggered) {
+            event.action();
+            event.triggered = true;
+          }
+        });
+
+        if (restTime <= 0) {
+          console.log('[Timer] Rest ended, starting next round');
+          if (timerRef.current) {
+            clearInterval(timerRef.current);
+            timerRef.current = null;
+          }
+          startCountdown(false);
+        }
+      }, 1000);
+      return;
+    }
+  }, [
+    isPaused,
+    config.phase,
+    config.countdown,
+    config.currentRound,
+    config.roundDuration,
+    config.restDuration,
+    timeRemaining,
+    audio,
+    scheduleNextCallout,
+    scheduleRoundEvents,
+    handleRoundEnd,
+    beginRound,
+    startCountdown,
+    playCountdownBeep
+  ]);
 
   const resetTimer = useCallback(() => {
     console.log('[Timer] Reset');
@@ -474,18 +603,22 @@ export function useTimer(initialConfig: Partial<TimerConfig> = {}) {
     }
     calloutScheduledRef.current = false;
     isRoundActiveRef.current = false;
+    isFirstRoundRef.current = true;
     eventsRef.current = [];
+    currentPhaseRef.current = 'idle';
+    currentRoundRef.current = 1;
     setIsRunning(false);
     setIsPaused(false);
     setCurrentCallout('');
-    setConfig(prev => ({ 
-      ...prev, 
-      phase: 'idle', 
+    setConfig(prev => ({
+      ...prev,
+      phase: 'idle',
       currentRound: 1,
       countdown: 10,
       countdownTotal: 10
     }));
     setTimeRemaining(config.roundDuration);
+    timeRemainingRef.current = config.roundDuration;
   }, [config.roundDuration]);
 
   useEffect(() => {
@@ -508,7 +641,8 @@ export function useTimer(initialConfig: Partial<TimerConfig> = {}) {
     isRunning,
     isPaused,
     currentCallout,
-    isDefensive,
+    isDefensive: currentCalloutCategory === 'defense',
+    currentCalloutCategory,
     startTimer,
     pauseTimer,
     resumeTimer,

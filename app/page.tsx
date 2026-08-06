@@ -7,6 +7,7 @@ import { useAuth } from '@/lib/auth';
 import { WorkoutProvider, useWorkout } from '@/contexts/WorkoutContext';
 import { SettingsProvider, useSettings } from '@/contexts/SettingsContext';
 import Timer from '@/app/components/Timer';
+import WorkoutSetup from '@/app/components/WorkoutSetup';
 import History from '@/app/components/History';
 import Settings from '@/app/components/Settings';
 import AuthScreen from '@/app/components/AuthScreen';
@@ -19,6 +20,7 @@ const VALID_INTENSITIES = ['pressure', 'counter'];
 function Dashboard() {
   const { user, loading, signOut } = useAuth();
   const [view, setView] = useState<'workout' | 'history' | 'settings'>('workout');
+  const [selectedWorkoutName, setSelectedWorkoutName] = useState<string | null>(null);
   const { currentWorkoutId, setCurrentWorkoutId } = useWorkout();
   const { settings } = useSettings();
 
@@ -92,7 +94,7 @@ function Dashboard() {
   return (
     <div className="min-h-screen bg-gray-900 text-white">
       <header className="p-4 flex justify-between items-center border-b border-gray-700">
-        <h1 className="text-xl font-bold">🥊 Boxing Timer</h1>
+        <h1 className="text-xl font-bold">MMA Training Timer</h1>
         <div className="flex gap-3 flex-wrap">
           <button
             onClick={() => setView('workout')}
@@ -134,11 +136,31 @@ function Dashboard() {
       </header>
 
       {view === 'workout' && (
-        <Timer 
-          onWorkoutStart={handleWorkoutStart}
-          onWorkoutEnd={handleWorkoutEnd}
-          currentWorkoutId={currentWorkoutId}
-        />
+        selectedWorkoutName ? (
+          <div>
+            <div className="mx-auto flex max-w-5xl items-center justify-between gap-3 p-4">
+              <div>
+                <div className="text-xs font-semibold uppercase tracking-wide text-gray-500">Current Session</div>
+                <div className="text-lg font-bold text-white">{selectedWorkoutName}</div>
+              </div>
+              <button
+                onClick={() => setSelectedWorkoutName(null)}
+                disabled={Boolean(currentWorkoutId)}
+                className="rounded px-3 py-2 text-sm font-semibold text-gray-300 transition-colors hover:bg-gray-800 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                Change
+              </button>
+            </div>
+            <Timer 
+              onWorkoutStart={handleWorkoutStart}
+              onWorkoutEnd={handleWorkoutEnd}
+              currentWorkoutId={currentWorkoutId}
+              workoutName={selectedWorkoutName}
+            />
+          </div>
+        ) : (
+          <WorkoutSetup onSelectWorkout={setSelectedWorkoutName} />
+        )
       )}
       
       {view === 'history' && <History />}
