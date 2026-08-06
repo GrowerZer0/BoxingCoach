@@ -33,23 +33,23 @@ export interface RoutineTemplate {
 export const INTENSITY_PRESETS: Record<string, IntensityPreset> = {
   pressure: {
     id: 'pressure',
-    name: 'Pressure Fighting',
-    description: 'High pace, aggressive, constant pressure',
+    name: 'Bag Pressure',
+    description: 'Fight-paced bag work with quick resets and frequent callouts',
     icon: 'F',
-    minDelay: 2,
-    maxDelay: 6,
-    punchesPerRound: 120,
+    minDelay: 1.5,
+    maxDelay: 3.5,
+    punchesPerRound: 150,
     comboComplexity: 'complex',
     defensiveChance: 0.15,
   },
   counter: {
     id: 'counter',
-    name: 'Counter Fighting',
-    description: 'Patient, tactical, wait for opportunities',
+    name: 'Technical Pace',
+    description: 'Realistic solo rounds with room to move, defend, and reset',
     icon: 'C',
-    minDelay: 6,
-    maxDelay: 12,
-    punchesPerRound: 60,
+    minDelay: 3.5,
+    maxDelay: 7,
+    punchesPerRound: 90,
     comboComplexity: 'moderate',
     defensiveChance: 0.35,
   },
@@ -89,47 +89,51 @@ export const DEFENSIVE_MOVES = [
   'Check Hook',
   'Pivot Right',
   'Pivot Left',
+  'Step Out',
+  'Reset Stance',
   'Sprawl',
-  'Frame and Circle',
+  'Frame on Bag',
+  'Circle Off Bag',
 ];
 
 export const CLINCH_MOVES = [
-  'Collar Tie',
-  'Double Collar Tie',
-  'Underhook',
-  'Overhook',
-  'Pummel',
-  'Frame Off',
-  'Knee Entry',
-  'Wall Walk',
+  'Bag Clinch',
+  'Forehead Pressure',
+  'Frame and Knee',
+  'Short Knees',
+  'Shoulder Pressure',
+  'Circle Off Clinch',
+  'Post and Exit',
+  'Dirty Boxing',
 ];
 
 export const TAKEDOWN_MOVES = [
   'Level Change',
-  'Single Leg Entry',
-  'Double Leg Entry',
-  'Body Lock',
-  'Outside Trip',
-  'Inside Trip',
-  'Snap Down',
-  'Mat Return',
+  'Penetration Step',
+  'Single Leg Shadow',
+  'Double Leg Shadow',
+  'Shot to Bag',
+  'Sprawl to Bag',
+  'Snap Down on Bag',
+  'Lift and Turn Bag',
+  'Drive Through Bag',
 ];
 
 export const GROUND_MOVES = [
   'Technical Stand Up',
   'Hip Escape',
   'Bridge and Shrimp',
-  'Granby Roll',
-  'Guard Retention',
-  'Closed Guard Break',
-  'Knee Slice Pass',
-  'Half Guard Pass',
-  'Mount Escape',
-  'Back Escape',
-  'Ground and Pound Posture',
-  'Armbar Drill',
-  'Triangle Setup',
-  'Rear Naked Choke Finish',
+  'Sit Out',
+  'Bag Mount',
+  'Bag Side Control',
+  'Knee on Bag',
+  'Top Pressure Hold',
+  'Posture and Punch',
+  'Elbows on Bag',
+  'Stand Over Bag',
+  'Sprawl Spin',
+  'Shin Ride Switch',
+  'Get Up and Strike',
 ];
 
 export const ALL_MOVES: Record<MoveCategory, string[]> = {
@@ -143,9 +147,9 @@ export const ALL_MOVES: Record<MoveCategory, string[]> = {
 export const MOVE_CATEGORY_LABELS: Record<MoveCategory, string> = {
   striking: 'Striking',
   defense: 'Defense',
-  clinch: 'Clinch',
-  takedown: 'Takedowns',
-  ground: 'Ground Work',
+  clinch: 'Bag Clinch',
+  takedown: 'Shot Entries',
+  ground: 'Duffel Ground Work',
 };
 
 export const MOVE_CATEGORY_COLORS: Record<MoveCategory, { active: string; idle: string; panel: string; text: string }> = {
@@ -183,56 +187,56 @@ export const MOVE_CATEGORY_COLORS: Record<MoveCategory, { active: string; idle: 
 
 const DEFAULT_COMBOS: Record<IntensityPreset['comboComplexity'], string[]> = {
   simple: ['1', '2', '1-2', '1-1-2', 'Slip Right', 'Sprawl', 'Technical Stand Up'],
-  moderate: ['1-2-3', '3-2', '1-3-2', '2-3-2', 'Slip Left', 'Level Change', 'Hip Escape'],
-  complex: ['1-2-3-2', '1-2-5-2', 'Slip Right-2-3', 'Sprawl-2-3', 'Double Leg Entry', 'Knee Slice Pass'],
+  moderate: ['1-2-3', '3-2', '1-3-2', '2-3-2', 'Slip Left-2', 'Shot to Bag', 'Hip Escape'],
+  complex: ['1-2-3-2', '1-2-5-2', 'Slip Right-2-3', 'Sprawl-2-3', 'Dirty Boxing', 'Posture and Punch'],
 };
 
 export const ROUTINE_TEMPLATES: RoutineTemplate[] = [
   {
-    id: 'mma-foundations',
-    name: 'MMA Foundations',
-    focus: 'Boxing, defense, takedown reactions, and get-ups',
+    id: 'solo-mma-foundations',
+    name: 'Solo MMA Foundations',
+    focus: 'Heavy bag striking, defensive movement, shot entries, and duffel get-ups',
     rounds: 5,
     roundDuration: 180,
     restDuration: 60,
     intensityId: 'counter',
     roundConfigs: [
-      { roundNumber: 1, name: 'Boxing Rhythm', combos: ['1', '1-2', '1-2-3', 'Slip Right', 'Pivot Left'] },
-      { roundNumber: 2, name: 'Defense to Counter', combos: ['Slip Left-2', 'Roll Right-3', 'High Guard', 'Frame and Circle', '2-3-2'] },
-      { roundNumber: 3, name: 'Takedown Awareness', combos: ['1-2-Sprawl', 'Level Change', 'Single Leg Entry', 'Sprawl-2', 'Frame and Circle'] },
-      { roundNumber: 4, name: 'Ground Movement', combos: ['Hip Escape', 'Bridge and Shrimp', 'Technical Stand Up', 'Guard Retention', 'Mount Escape'] },
-      { roundNumber: 5, name: 'Mixed Fight Round', combos: ['1-2-3', 'Sprawl', 'Knee Entry', 'Double Leg Entry', 'Ground and Pound Posture', 'Technical Stand Up'] },
+      { roundNumber: 1, name: 'Bag Boxing Rhythm', combos: ['1', '1-2', '1-2-3', 'Slip Right-2', 'Pivot Left'] },
+      { roundNumber: 2, name: 'Defense to Counter', combos: ['Slip Left-2', 'Roll Right-3', 'High Guard', 'Circle Off Bag', '2-3-2'] },
+      { roundNumber: 3, name: 'Shot Awareness', combos: ['1-2-Sprawl', 'Level Change', 'Shot to Bag', 'Sprawl-2', 'Frame on Bag'] },
+      { roundNumber: 4, name: 'Duffel Ground Movement', combos: ['Hip Escape', 'Bridge and Shrimp', 'Technical Stand Up', 'Bag Side Control', 'Bag Mount'] },
+      { roundNumber: 5, name: 'Solo Fight Round', combos: ['1-2-3', 'Sprawl to Bag', 'Frame and Knee', 'Posture and Punch', 'Get Up and Strike'] },
     ],
   },
   {
-    id: 'pressure-mma',
-    name: 'Pressure MMA',
-    focus: 'Forward pressure, clinch entries, trips, and top control',
+    id: 'bag-pressure-mma',
+    name: 'Bag Pressure MMA',
+    focus: 'Fast heavy bag bursts, clinch pressure, sprawls, and top-control conditioning',
     rounds: 5,
     roundDuration: 180,
     restDuration: 45,
     intensityId: 'pressure',
     roundConfigs: [
-      { roundNumber: 1, name: 'Pressure Boxing', combos: ['1-1-2', '1-2-3-2', '3-2-3', 'Check Hook', 'Pivot Right'] },
-      { roundNumber: 2, name: 'Pocket Defense', combos: ['Roll Left-3-2', 'Roll Right-2-3', 'High Guard', 'Body Block', 'Parry Jab-2'] },
-      { roundNumber: 3, name: 'Clinch Entries', combos: ['1-2-Collar Tie', 'Knee Entry', 'Pummel', 'Underhook', 'Frame Off'] },
-      { roundNumber: 4, name: 'Trips and Returns', combos: ['Body Lock', 'Outside Trip', 'Inside Trip', 'Mat Return', 'Snap Down'] },
-      { roundNumber: 5, name: 'Top Game', combos: ['Closed Guard Break', 'Knee Slice Pass', 'Half Guard Pass', 'Ground and Pound Posture', 'Back Escape'] },
+      { roundNumber: 1, name: 'Pressure Boxing', combos: ['1-1-2', '1-2-3-2', '3-2-3', 'Check Hook-2', 'Pivot Right-2'] },
+      { roundNumber: 2, name: 'Pocket Defense', combos: ['Roll Left-3-2', 'Roll Right-2-3', 'High Guard-3-2', 'Body Block-2-3', 'Parry Jab-2'] },
+      { roundNumber: 3, name: 'Bag Clinch', combos: ['1-2-Bag Clinch', 'Short Knees', 'Dirty Boxing', 'Frame and Knee', 'Post and Exit-2'] },
+      { roundNumber: 4, name: 'Sprawl and Shot Entries', combos: ['Shot to Bag', 'Sprawl to Bag', 'Snap Down on Bag', 'Drive Through Bag', 'Sprawl-2-3'] },
+      { roundNumber: 5, name: 'Top Pressure', combos: ['Bag Mount', 'Knee on Bag', 'Posture and Punch', 'Elbows on Bag', 'Get Up and Strike'] },
     ],
   },
   {
-    id: 'ground-recovery',
-    name: 'Ground Recovery',
-    focus: 'Defensive grappling, escapes, and return to striking',
+    id: 'duffel-ground-conditioning',
+    name: 'Duffel Ground Conditioning',
+    focus: 'Limited solo ground work: movement, pressure, posture, and stand-ups',
     rounds: 4,
     roundDuration: 150,
     restDuration: 45,
     intensityId: 'counter',
     roundConfigs: [
-      { roundNumber: 1, name: 'Base and Frames', combos: ['Frame and Circle', 'Sprawl', 'Wall Walk', 'Technical Stand Up'] },
-      { roundNumber: 2, name: 'Bottom Escapes', combos: ['Hip Escape', 'Bridge and Shrimp', 'Mount Escape', 'Back Escape', 'Guard Retention'] },
-      { roundNumber: 3, name: 'Guard and Pass', combos: ['Closed Guard Break', 'Knee Slice Pass', 'Half Guard Pass', 'Triangle Setup', 'Armbar Drill'] },
-      { roundNumber: 4, name: 'Scramble Round', combos: ['Granby Roll', 'Technical Stand Up', 'Single Leg Entry', 'Sprawl-2', 'Ground and Pound Posture'] },
+      { roundNumber: 1, name: 'Base and Get-Ups', combos: ['Technical Stand Up', 'Hip Escape', 'Sit Out', 'Stand Over Bag'] },
+      { roundNumber: 2, name: 'Bottom Movement', combos: ['Hip Escape', 'Bridge and Shrimp', 'Sit Out', 'Get Up and Strike'] },
+      { roundNumber: 3, name: 'Top Pressure', combos: ['Bag Side Control', 'Bag Mount', 'Knee on Bag', 'Top Pressure Hold', 'Posture and Punch'] },
+      { roundNumber: 4, name: 'Scramble Round', combos: ['Sprawl Spin', 'Technical Stand Up', 'Shot to Bag', 'Sprawl-2', 'Get Up and Strike'] },
     ],
   },
 ];
@@ -258,7 +262,7 @@ export function isDefensiveMove(move: string): boolean {
 }
 
 export function getRandomDelay(min: number, max: number): number {
-  return Math.floor(Math.random() * (max - min + 1)) + min;
+  return Math.random() * (max - min) + min;
 }
 
 export function formatMoveForDisplay(move: string): string {

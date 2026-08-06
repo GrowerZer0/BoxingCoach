@@ -183,9 +183,9 @@ export default function Settings() {
                       <h4 className="font-semibold text-white">{preset.name}</h4>
                       <p className="text-xs text-gray-400">{preset.description}</p>
                       <div className="flex gap-3 mt-1 text-xs text-gray-500">
-                        <span>⏱️ {preset.minDelay}-{preset.maxDelay}s</span>
-                        <span>🥊 ~{preset.punchesPerRound} punches</span>
-                        <span>🛡️ {Math.round(preset.defensiveChance * 100)}% defense</span>
+                        <span>{preset.minDelay}-{preset.maxDelay}s</span>
+                        <span>~{preset.punchesPerRound} actions</span>
+                        <span>{Math.round(preset.defensiveChance * 100)}% defense</span>
                       </div>
                     </div>
                   </div>
@@ -256,9 +256,9 @@ export default function Settings() {
                     <div className="flex gap-2 mt-1 flex-wrap">
                       <span className="text-xs text-green-400">{categoryCounts.striking} striking</span>
                       <span className="text-xs text-blue-400">{categoryCounts.defense} defense</span>
-                      <span className="text-xs text-cyan-300">{categoryCounts.clinch} clinch</span>
-                      <span className="text-xs text-orange-300">{categoryCounts.takedown} takedowns</span>
-                      <span className="text-xs text-purple-300">{categoryCounts.ground} ground</span>
+                      <span className="text-xs text-cyan-300">{categoryCounts.clinch} bag clinch</span>
+                      <span className="text-xs text-orange-300">{categoryCounts.takedown} shot entries</span>
+                      <span className="text-xs text-purple-300">{categoryCounts.ground} duffel ground</span>
                     </div>
                   </div>
                   <div className="flex gap-2">
@@ -366,8 +366,8 @@ export default function Settings() {
             <h4 className="text-sm font-medium text-gray-300 mb-2">💡 How it works:</h4>
             <ul className="text-sm text-gray-400 space-y-1">
               <li>• Striking uses the traditional 1-8 boxing convention.</li>
-              <li>• Defense, clinch, takedown, and ground work use normal technique names.</li>
-              <li>• Use <span className="text-purple-400">Generate</span> to seed a practical MMA round.</li>
+              <li>• Defense, bag clinch, shot entries, and duffel ground work use normal solo-training names.</li>
+              <li>• Use <span className="text-purple-400">Generate</span> to seed a practical solo MMA round.</li>
               <li>• The timer randomly calls from each round's selected list.</li>
             </ul>
           </div>
