@@ -11,11 +11,12 @@ import WorkoutSetup from '@/app/components/WorkoutSetup';
 import History from '@/app/components/History';
 import Settings from '@/app/components/Settings';
 import AuthScreen from '@/app/components/AuthScreen';
+import { INTENSITY_PRESETS } from '@/types/workout';
 
 const supabase = getSupabaseClient();
 
 // Match database values
-const VALID_INTENSITIES = ['pressure', 'counter'];
+const VALID_INTENSITIES = Object.keys(INTENSITY_PRESETS); // ['flow', 'standard', 'intense', 'counter']
 
 function Dashboard() {
   const { user, loading, signOut } = useAuth();
@@ -30,12 +31,6 @@ function Dashboard() {
     try {
       // Map intensity to valid database values
       let intensityValue = settings.intensityId || 'counter';
-      
-      // Ensure it's a valid value for your database
-      if (!VALID_INTENSITIES.includes(intensityValue)) {
-        console.warn(`Invalid intensity: ${intensityValue}, using fallback 'counter'`);
-        intensityValue = 'counter';
-      }
       
       console.log('[Page] Starting workout with intensity:', intensityValue);
       

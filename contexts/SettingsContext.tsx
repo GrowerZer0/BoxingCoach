@@ -1,13 +1,13 @@
-// contexts/SettingsContext.tsx
 'use client';
 
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { getSupabaseClient } from '@/lib/supabase';
 import { useAuth } from '@/lib/auth';
-import { ROUTINE_TEMPLATES, RoutineTemplate } from '@/types/workout';
+import { ROUTINE_TEMPLATES, RoutineTemplate, INTENSITY_PRESETS } from '@/types/workout';
 
-// Get Supabase client
 const supabase = getSupabaseClient();
+
+const VALID_INTENSITIES = Object.keys(INTENSITY_PRESETS); // ['flow', 'standard', 'intense', 'counter', 'pressure']
 
 export interface RoundConfig {
   roundNumber: number;
@@ -20,7 +20,7 @@ export interface WorkoutSettings {
   roundDuration: number;
   restDuration: number;
   rounds: number;
-  intensityId: string; // Must be 'pressure' or 'counter' to match database
+  intensityId: string;
   roundConfigs: RoundConfig[];
   enableAudio: boolean;
   enableVoice: boolean;
@@ -38,7 +38,7 @@ const DEFAULT_SETTINGS: WorkoutSettings = {
   roundDuration: 180,
   restDuration: 60,
   rounds: 3,
-  intensityId: 'counter', // Changed from 'moderate' to 'counter'
+  intensityId: 'standard',
   roundConfigs: DEFAULT_ROUND_CONFIGS,
   enableAudio: true,
   enableVoice: true,
@@ -47,8 +47,6 @@ const DEFAULT_SETTINGS: WorkoutSettings = {
   countdownSeconds: 3,
   customRoutines: [],
 };
-
-const VALID_INTENSITIES = ['flow', 'standard', 'intense', 'counter', 'pressure'];
 
 interface SettingsContextType {
   settings: WorkoutSettings;
@@ -75,9 +73,8 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
     if (savedSettings) {
       try {
         const parsed = JSON.parse(savedSettings);
-        // Ensure intensityId is valid
         if (parsed.intensityId && !VALID_INTENSITIES.includes(parsed.intensityId)) {
-          parsed.intensityId = 'counter';
+          parsed.intensityId = 'standard';
         }
         setSettings({ ...DEFAULT_SETTINGS, ...parsed });
       } catch (error) {
@@ -94,20 +91,20 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
     }
   }, [settings, isLoaded]);
 
-  const updateSettings = async (newSettings: Partial<WorkoutSettings>) => {
-    // Validate intensityId if it's being updated
-if (newSettings.intensityId && !VALID_INTENSITIES.includes(newSettings.intensityId)) {
-  console.warn(`Invalid intensity: ${newSettings.intensityId}, using 'standard'`);
-  newSettings.intensityId = 'standard';
-}
-    setSettings(prev => {
-      const next = { ...prev, ...newSettings };
-      if (newSettings.rounds && next.roundConfigs.length > newSettings.rounds) {
-        next.roundConfigs = next.roundConfigs.slice(0, newSettings.rounds);
-      }
-      return next;
-    });
-  };
+const updateSettings = async (newSettings: Partial<WorkoutSettings>) => {
+  if (newSettings.intensityId && !VALID_INTENSITIES.includes(newSettings.intensityId)) {
+    console.warn(`Invalid intensity: ${newSettings.intensityId}, falling back to 'standard'`);
+    newSettings.intensityId = 'standard';
+  }
+
+  setSettings(prev => {
+    const next = { ...prev, ...newSettings };
+    if (newSettings.rounds && next.roundConfigs.length > newSettings.rounds) {
+      next.roundConfigs = next.roundConfigs.slice(0, newSettings.rounds);
+    }
+    return next;
+  });
+};
 
   const updateRoundConfig = async (roundNumber: number, config: Partial<RoundConfig>) => {
     setSettings(prev => ({
@@ -206,10 +203,9 @@ if (newSettings.intensityId && !VALID_INTENSITIES.includes(newSettings.intensity
       if (result.error) throw result.error;
       if (result.data?.settings) {
         const parsedSettings = result.data.settings;
-        // Validate intensity
-if (parsedSettings.intensityId && !VALID_INTENSITIES.includes(parsedSettings.intensityId)) {
-  parsedSettings.intensityId = 'standard';
-}
+        if (parsedSettings.intensityId && !VALID_INTENSITIES.includes(parsedSettings.intensityId)) {
+          parsedSettings.intensityId = 'standard';
+        }
         setSettings(prev => ({ ...prev, ...parsedSettings }));
         localStorage.setItem('workoutSettings', JSON.stringify(parsedSettings));
         console.log('Settings loaded from Supabase');
