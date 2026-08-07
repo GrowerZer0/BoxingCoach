@@ -551,8 +551,9 @@ export function useTimer(initialConfig: Partial<TimerConfig> = {}) {
           }
         });
 
+        // Re-initiate callout scheduling if none is pending and within active callout window
         if (currentTime <= config.roundDuration - 3 && currentTime > 4) {
-          if (!calloutScheduledRef.current && !calloutTimerRef.current) {
+          if (!calloutScheduledRef.current) {
             scheduleNextCallout();
           }
         }
@@ -563,11 +564,13 @@ export function useTimer(initialConfig: Partial<TimerConfig> = {}) {
             timerRef.current = null;
           }
           isRoundActiveRef.current = false;
+          isSpeakingRef.current = false;
           handleRoundEnd();
         }
       }, 1000);
 
-      if (!calloutScheduledRef.current && !calloutTimerRef.current) {
+      // Ensure a callout is scheduled right after resume if conditions allow
+      if (!calloutScheduledRef.current) {
         scheduleNextCallout();
       }
       return;
