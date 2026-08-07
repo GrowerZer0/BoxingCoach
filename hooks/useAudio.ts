@@ -4,6 +4,7 @@ import { useCallback, useRef, useEffect } from 'react';
 
 export const useAudio = () => {
   const audioCtxRef = useRef<AudioContext | null>(null);
+  const voicesRef = useRef<SpeechSynthesisVoice[]>([]);
   // Initialize or resume AudioContext on user interaction
   const initAudio = useCallback(() => {
     if (typeof window === 'undefined') return;
@@ -139,10 +140,7 @@ export const useAudio = () => {
     if (typeof window === 'undefined' || !('speechSynthesis' in window)) return;
 
     const synth = window.speechSynthesis;
-    if (synth.paused) {
-      synth.resume();
-    }
-
+    
     if (priority === 'high') {
       synth.cancel();
     }
@@ -151,9 +149,21 @@ export const useAudio = () => {
     utterance.rate = 1.15;
     utterance.volume = 1.0;
 
-    const voices = synth.getVoices();
-    if (voices.length > 0) {
-      utterance.voice = voices.find(v => v.lang.startsWith('en')) || voices[0];
+    // Voice selection logic
+    const voices = voicesRef.current.length > 0 ? voicesRef.current : synth.getVoices();
+    const selectedVoice = 
+      voices.find(v => v.name.toLowerCase().includes('samantha')) ||
+      voices.find(v => v.lang.startsWith('en') && v.localService) ||
+      voices.find(v => v.lang.startsWith('en')) ||
+      voices[0];
+
+    if (selectedVoice) {
+      utterance.voice = selectedVoice;
+    }
+    
+    // Ensure synth is resumed before speaking
+    if (synth.paused) {
+      synth.resume();
     }
 
     synth.speak(utterance);
@@ -179,17 +189,21 @@ export const useAudio = () => {
   // Preload TTS voices and update if voices change
   useEffect(() => {
     if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+      const synth = window.speechSynthesis;
+
+      const loadVoices = () => {
+        voicesRef.current = synth.getVoices();
+      };
+
       // Initial preload
-      window.speechSynthesis.getVoices();
+      loadVoices();
 
       // Update voices if they change (e.g., new languages installed)
-      window.speechSynthesis.onvoiceschanged = () => {
-        window.speechSynthesis.getVoices();
-      };
+      synth.onvoiceschanged = loadVoices;
 
       // Clean up the event listener
       return () => {
-        window.speechSynthesis.onvoiceschanged = null;
+        synth.onvoiceschanged = null;
       };
     }
   }, []); // Empty dependency array means this runs once on mount and cleans up on unmount
