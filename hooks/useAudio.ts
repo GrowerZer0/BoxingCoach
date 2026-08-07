@@ -45,12 +45,6 @@ export const useAudio = () => {
     return audioCtxRef.current !== null && audioCtxRef.current.state === 'running';
   }, []);
 
-  // Preload TTS voices to avoid cold-start delays
-  const preloadVoices = useCallback(() => {
-    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
-      window.speechSynthesis.getVoices();
-    }
-  }, []);
 
   // Safe Haptic Feedback via Vibration API
   const hapticFeedback = useCallback((pattern: number | number[] = 10) => {
@@ -188,6 +182,24 @@ export const useAudio = () => {
     return window.speechSynthesis.speaking;
   }, []);
 
+  // Preload TTS voices and update if voices change
+  useEffect(() => {
+    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+      // Initial preload
+      window.speechSynthesis.getVoices();
+
+      // Update voices if they change (e.g., new languages installed)
+      window.speechSynthesis.onvoiceschanged = () => {
+        window.speechSynthesis.getVoices();
+      };
+
+      // Clean up the event listener
+      return () => {
+        window.speechSynthesis.onvoiceschanged = null;
+      };
+    }
+  }, []); // Empty dependency array means this runs once on mount and cleans up on unmount
+
   useEffect(() => {
     return () => {
       if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
@@ -200,7 +212,6 @@ export const useAudio = () => {
     initAudio,
     ensureContextReady,
     isContextReady,
-    preloadVoices,
     hapticFeedback,
     playBell,
     playBeep,
