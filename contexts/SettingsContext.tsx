@@ -48,6 +48,8 @@ const DEFAULT_SETTINGS: WorkoutSettings = {
   customRoutines: [],
 };
 
+const VALID_INTENSITIES = ['flow', 'standard', 'intense', 'counter', 'pressure'];
+
 interface SettingsContextType {
   settings: WorkoutSettings;
   updateSettings: (newSettings: Partial<WorkoutSettings>) => Promise<void>;
@@ -74,7 +76,7 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
       try {
         const parsed = JSON.parse(savedSettings);
         // Ensure intensityId is valid
-        if (parsed.intensityId && !['pressure', 'counter'].includes(parsed.intensityId)) {
+        if (parsed.intensityId && !VALID_INTENSITIES.includes(parsed.intensityId)) {
           parsed.intensityId = 'counter';
         }
         setSettings({ ...DEFAULT_SETTINGS, ...parsed });
@@ -94,10 +96,10 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
 
   const updateSettings = async (newSettings: Partial<WorkoutSettings>) => {
     // Validate intensityId if it's being updated
-    if (newSettings.intensityId && !['pressure', 'counter'].includes(newSettings.intensityId)) {
-      console.warn(`Invalid intensity: ${newSettings.intensityId}, using 'counter'`);
-      newSettings.intensityId = 'counter';
-    }
+if (newSettings.intensityId && !VALID_INTENSITIES.includes(newSettings.intensityId)) {
+  console.warn(`Invalid intensity: ${newSettings.intensityId}, using 'standard'`);
+  newSettings.intensityId = 'standard';
+}
     setSettings(prev => {
       const next = { ...prev, ...newSettings };
       if (newSettings.rounds && next.roundConfigs.length > newSettings.rounds) {
@@ -205,9 +207,9 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
       if (result.data?.settings) {
         const parsedSettings = result.data.settings;
         // Validate intensity
-        if (parsedSettings.intensityId && !['pressure', 'counter'].includes(parsedSettings.intensityId)) {
-          parsedSettings.intensityId = 'counter';
-        }
+if (parsedSettings.intensityId && !VALID_INTENSITIES.includes(parsedSettings.intensityId)) {
+  parsedSettings.intensityId = 'standard';
+}
         setSettings(prev => ({ ...prev, ...parsedSettings }));
         localStorage.setItem('workoutSettings', JSON.stringify(parsedSettings));
         console.log('Settings loaded from Supabase');
