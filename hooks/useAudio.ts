@@ -182,6 +182,17 @@ export const useAudio = () => {
     return window.speechSynthesis.speaking;
   }, []);
 
+  // Manual preload/resume for TTS voices to ensure they are ready and speech can start
+  const preloadVoices = useCallback(() => {
+    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+      const synth = window.speechSynthesis;
+      synth.getVoices(); // Ensure voices are loaded
+      if (synth.paused) {
+        synth.resume(); // Resume if paused to unblock speech
+      }
+    }
+  }, []);
+
   // Preload TTS voices and update if voices change
   useEffect(() => {
     if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
@@ -220,5 +231,6 @@ export const useAudio = () => {
     playTenSeconds,
     speak,
     isSpeaking,
+    preloadVoices, // Export preloadVoices
   };
 };

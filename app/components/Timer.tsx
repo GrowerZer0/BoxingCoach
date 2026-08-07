@@ -58,7 +58,8 @@ export default function Timer(props: TimerProps) {
 
   useEffect(() => {
     const preload = () => {
-      audio.preloadVoices();
+      // Safely call preloadVoices using optional chaining
+      audio.preloadVoices?.();
       document.removeEventListener('click', preload);
       document.removeEventListener('touchstart', preload);
     };
@@ -70,7 +71,7 @@ export default function Timer(props: TimerProps) {
       document.removeEventListener('click', preload);
       document.removeEventListener('touchstart', preload);
     };
-  }, [audio]);
+  }, [audio]); // Dependency array should include audio
 
   useEffect(() => {
     if (isRunning) {
