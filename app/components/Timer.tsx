@@ -49,6 +49,7 @@ export default function Timer(props: TimerProps) {
     restDuration: restDuration,
     rounds: totalRounds,
     intensityId: intensityId,
+    audio: audio,
   });
 
   const { requestWakeLock, releaseWakeLock, isActive } = useWakeLock({

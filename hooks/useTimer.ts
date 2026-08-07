@@ -1,4 +1,4 @@
-// hooks/useTimer.ts - Complete fixed version with Mobile Audio Unlock
+// hooks/useTimer.ts - Complete fixed version with Mobile Audio Unlock & External Audio Context Sharing
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { useAudio } from './useAudio';
 import { useSettings } from '@/contexts/SettingsContext';
@@ -25,9 +25,17 @@ export interface TimerConfig {
   intensityId: string;
 }
 
-export function useTimer(initialConfig: Partial<TimerConfig> = {}) {
+export interface UseTimerOptions extends Partial<TimerConfig> {
+  audio?: ReturnType<typeof useAudio>;
+}
+
+export function useTimer(options: UseTimerOptions = {}) {
+  const { audio: externalAudio, ...initialConfig } = options;
   const { settings } = useSettings();
-  const audio = useAudio();
+  
+  // Use passed audio instance to share WebAudio context, or fall back to internal
+  const internalAudio = useAudio();
+  const audio = externalAudio || internalAudio;
 
   const [config, setConfig] = useState<TimerConfig>({
     roundDuration: 180,
@@ -394,7 +402,6 @@ export function useTimer(initialConfig: Partial<TimerConfig> = {}) {
   const startTimer = useCallback(async () => {
     if (isRunning) return;
 
-    // Direct Web Audio context unlock triggered by tap event
     if (audio.ensureContextReady) {
       await audio.ensureContextReady();
     }
