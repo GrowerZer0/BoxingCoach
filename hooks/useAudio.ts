@@ -136,7 +136,7 @@ export const useAudio = () => {
   }, [initAudio]);
 
   // Text-To-Speech Callout
-  const speakText = useCallback((text: string, priority?: string) => {
+  const speakText = useCallback((text: string, priority?: string, onEnd?: () => void) => {
     if (typeof window === 'undefined' || !('speechSynthesis' in window)) return;
 
     const synth = window.speechSynthesis;
@@ -146,7 +146,7 @@ export const useAudio = () => {
     }
 
     const utterance = new SpeechSynthesisUtterance(text);
-    utterance.rate = 1.15;
+    utterance.rate = 1.1; // Adjusted rate for realism
     utterance.volume = 1.0;
 
     // Voice selection logic
@@ -161,6 +161,12 @@ export const useAudio = () => {
       utterance.voice = selectedVoice;
     }
     
+    // Set onEnd callback for when speech finishes or errors
+    if (onEnd) {
+      utterance.onend = () => onEnd();
+      utterance.onerror = () => onEnd(); // Fallback so timer doesn't stall on speech error
+    }
+
     // Ensure synth is resumed before speaking
     if (synth.paused) {
       synth.resume();

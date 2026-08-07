@@ -51,7 +51,7 @@ export function useTimer(initialConfig: Partial<TimerConfig> = {}) {
   const calloutTimerRef = useRef<NodeJS.Timeout | null>(null);
   const countdownRef = useRef<NodeJS.Timeout | null>(null);
   const eventsRef = useRef<{ time: number; action: () => void; triggered: boolean }[]>([]);
-  const calloutScheduledRef = useRef(false);
+  const calloutScheduledRef = useRef(false); // Indicates if a callout (speech + post-speech delay) is currently pending
   const isRoundActiveRef = useRef(false);
   const isFirstRoundRef = useRef(true);
 
@@ -59,6 +59,7 @@ export function useTimer(initialConfig: Partial<TimerConfig> = {}) {
   const currentPhaseRef = useRef<TimerPhase>('idle');
   const currentRoundRef = useRef<number>(1);
   const timeRemainingRef = useRef<number>(config.roundDuration);
+  const isSpeakingRef = useRef(false); // To prevent multiple simultaneous calls to speakText
 
   // Update refs when state changes
   useEffect(() => {
@@ -118,52 +119,54 @@ export function useTimer(initialConfig: Partial<TimerConfig> = {}) {
 
   // Schedule next callout - Using ref for phase
   const scheduleNextCallout = useCallback(() => {
-    console.log('[Timer] scheduleNextCallout called');
-    console.log('[Timer] Current ref phase:', currentPhaseRef.current);
-    console.log('[Timer] Current timeRemaining:', timeRemainingRef.current);
-
+    // Clear any existing callout timer before scheduling a new one.
     if (calloutTimerRef.current) {
       clearTimeout(calloutTimerRef.current);
       calloutTimerRef.current = null;
     }
 
-    // Use the ref for phase - this is the source of truth
     const phase = currentPhaseRef.current;
     const isRound = phase === 'round';
     const remaining = timeRemainingRef.current;
 
+    // Prevent callouts if not in round, paused, or very little time left (4 seconds buffer)
     if (!isRound || isPaused || remaining <= 4) {
-      console.log('[Timer] Not scheduling - conditions not met (phase:', phase, ')');
+      console.log('[Timer] Not scheduling callout - conditions not met (phase:', phase, ', remaining:', remaining, ')');
+      setCurrentCallout(''); // Clear current callout display
       calloutScheduledRef.current = false;
       return;
     }
 
     const availableMoves = getAvailableMoves();
     if (availableMoves.length === 0) {
-      console.warn('[Timer] No available moves!');
+      console.warn('[Timer] No available moves for callout!');
       calloutScheduledRef.current = false;
       return;
     }
 
     const intensity = INTENSITY_PRESETS[config.intensityId] || INTENSITY_PRESETS.counter;
 
+    // This 'delayBeforeSpeech' is the time UNTIL the *next* callout SPEECH starts.
     const baseDelay = getRandomDelay(intensity.minDelay, intensity.maxDelay);
-    const jitter = Math.random() * 2 - 1;
-    const delay = Math.max(1.5, baseDelay + jitter) * 1000;
+    const jitter = Math.random() * 2 - 1; // +/- 1 second
+    const delayBeforeSpeech = Math.max(1.5, baseDelay + jitter) * 1000; // Minimum 1.5 seconds before speech
 
-    console.log(`[Timer] Scheduling next callout in ${delay}ms`);
+    console.log(`[Timer] Scheduling callout SPEECH to start in ${delayBeforeSpeech}ms`);
 
-    calloutScheduledRef.current = true;
+    calloutScheduledRef.current = true; // Indicate a callout (speech + post-speech delay) is now pending
 
     calloutTimerRef.current = setTimeout(() => {
-      console.log('[Timer] Callout timer fired!');
+      console.log('[Timer] Callout speech initiation timer fired!');
 
       const phaseNow = currentPhaseRef.current;
       const remainingNow = timeRemainingRef.current;
 
+      // Re-check conditions right before speaking in case state changed during delay
       if (phaseNow !== 'round' || isPaused || remainingNow <= 4) {
-        console.log('[Timer] Invalid state for callout');
+        console.log('[Timer] Invalid state for callout speech at trigger time.');
+        setCurrentCallout('');
         calloutScheduledRef.current = false;
+        isSpeakingRef.current = false;
         return;
       }
 
@@ -175,17 +178,39 @@ export function useTimer(initialConfig: Partial<TimerConfig> = {}) {
       const displayCallout = formatMoveForDisplay(randomMove);
       setCurrentCallout(displayCallout);
 
-      console.log(`[Timer] Playing callout: ${displayCallout} (${category})`);
+      const speechText = formatMoveForSpeech(randomMove);
+      console.log(`[Timer] Playing callout: "${displayCallout}" (speech: "${speechText}") (${category})`);
 
-      if (audio.speakText) {
-        audio.speakText(formatMoveForSpeech(randomMove), 'high');
+      // Calculate post-speech rest period for realism
+      const minPostSpeechRest = 2.0; // seconds
+      const maxPostSpeechRest = 3.5; // seconds
+      const postSpeechRest = (Math.random() * (maxPostSpeechRest - minPostSpeechRest) + minPostSpeechRest) * 1000;
+
+      const onSpeechEnd = () => {
+        console.log(`[Timer] Speech ended. Scheduling next callout after ${postSpeechRest}ms rest.`);
+        isSpeakingRef.current = false; // Speech has finished
+        // Schedule the *next* call to scheduleNextCallout after the rest period
+        calloutTimerRef.current = setTimeout(() => {
+          scheduleNextCallout(); // Recursive call for the *next* callout cycle
+        }, postSpeechRest);
+      };
+
+      isSpeakingRef.current = true; // Mark speech as active
+
+      if (audio.speakText && settings.enableVoice) {
+        audio.speakText(speechText, 'high', onSpeechEnd); // Pass onEnd callback
+      } else {
+        console.warn('[Timer] Audio.speakText not enabled or voice disabled, falling back to fixed delay for next callout.');
+        // If speech not playing, immediately schedule the post-speech rest
+        isSpeakingRef.current = false;
+        calloutTimerRef.current = setTimeout(() => {
+          scheduleNextCallout();
+        }, postSpeechRest);
       }
-      audio.hapticFeedback([15, 30, 15]);
-
-      calloutScheduledRef.current = false;
-      scheduleNextCallout();
-    }, delay);
-  }, [isPaused, config.intensityId, audio, getAvailableMoves]);
+      audio.hapticFeedback([15, 30, 15]); // Haptic feedback happens immediately with speech
+      
+    }, delayBeforeSpeech); // This timeout initiates the speech after the initial delay
+  }, [isPaused, config.intensityId, audio, getAvailableMoves, settings.enableVoice]);
 
   // Schedule events for a round
   const scheduleRoundEvents = useCallback((duration: number) => {
@@ -266,10 +291,15 @@ export function useTimer(initialConfig: Partial<TimerConfig> = {}) {
     setCurrentCallout('');
     calloutScheduledRef.current = false;
     isRoundActiveRef.current = true;
+    isSpeakingRef.current = false;
 
     if (calloutTimerRef.current) {
       clearTimeout(calloutTimerRef.current);
       calloutTimerRef.current = null;
+    }
+    // Cancel any ongoing speech synthesis from previous phase/round
+    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+      window.speechSynthesis.cancel();
     }
 
     // Schedule events for this round
@@ -294,10 +324,10 @@ export function useTimer(initialConfig: Partial<TimerConfig> = {}) {
         }
       });
 
-      // Start callouts after first 3 seconds of round
+      // Start callouts after first 3 seconds of round, if not already pending
       if (currentTime <= config.roundDuration - 3 && currentTime > 4) {
-        if (!calloutScheduledRef.current && !calloutTimerRef.current) {
-          console.log('[Timer] Starting callout scheduling');
+        if (!calloutScheduledRef.current) {
+          console.log('[Timer] Kicking off initial callout scheduling.');
           scheduleNextCallout();
         }
       }
@@ -366,9 +396,14 @@ export function useTimer(initialConfig: Partial<TimerConfig> = {}) {
       setCurrentCallout('');
       calloutScheduledRef.current = false;
       isRoundActiveRef.current = false;
+      isSpeakingRef.current = false; // Ensure speaking state is reset
       if (calloutTimerRef.current) {
         clearTimeout(calloutTimerRef.current);
         calloutTimerRef.current = null;
+      }
+      // Cancel any ongoing speech synthesis
+      if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+        window.speechSynthesis.cancel();
       }
       if (audio.speakText) {
         audio.speakText('Workout complete! Great job!');
@@ -452,6 +487,11 @@ export function useTimer(initialConfig: Partial<TimerConfig> = {}) {
     if (countdownRef.current) {
       clearInterval(countdownRef.current);
       countdownRef.current = null;
+    }
+    isSpeakingRef.current = false;
+    // Cancel any ongoing speech synthesis
+    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+      window.speechSynthesis.cancel();
     }
   }, [isRunning, isPaused]);
 
@@ -604,6 +644,7 @@ export function useTimer(initialConfig: Partial<TimerConfig> = {}) {
     calloutScheduledRef.current = false;
     isRoundActiveRef.current = false;
     isFirstRoundRef.current = true;
+    isSpeakingRef.current = false; // Ensure speaking state is reset
     eventsRef.current = [];
     currentPhaseRef.current = 'idle';
     currentRoundRef.current = 1;
@@ -619,6 +660,10 @@ export function useTimer(initialConfig: Partial<TimerConfig> = {}) {
     }));
     setTimeRemaining(config.roundDuration);
     timeRemainingRef.current = config.roundDuration;
+    // Cancel any ongoing speech synthesis
+    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+      window.speechSynthesis.cancel();
+    }
   }, [config.roundDuration]);
 
   useEffect(() => {
@@ -643,6 +688,7 @@ export function useTimer(initialConfig: Partial<TimerConfig> = {}) {
     currentCallout,
     isDefensive: currentCalloutCategory === 'defense',
     currentCalloutCategory,
+    isSpeaking: isSpeakingRef.current, // Expose current speaking state
     startTimer,
     pauseTimer,
     resumeTimer,
