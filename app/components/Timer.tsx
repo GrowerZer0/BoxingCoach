@@ -32,7 +32,7 @@ export default function Timer(props: TimerProps) {
   const restDuration = settings?.restDuration || props.restLength || 60;
   const totalRounds = settings?.rounds || 3;
   const intensityId = settings?.intensityId || 'counter';
-
+const { initAudio, playBeep, speak } = useAudio();
   const {
     config,
     timeRemaining,
@@ -183,7 +183,7 @@ export default function Timer(props: TimerProps) {
 
   const handleStart = async () => {
     audio.hapticFeedback(15);
-    await audio.ensureContextReady();
+    audio.initAudio();
     
     if (props.onWorkoutStart) {
       try {
@@ -211,7 +211,7 @@ export default function Timer(props: TimerProps) {
 
   const handleResume = () => {
     audio.hapticFeedback([20, 10]);
-    audio.ensureContextReady();
+    audio.initAudio();
     resumeTimer();
   };
 
