@@ -2,9 +2,9 @@
 
 import { useCallback, useRef, useEffect } from 'react';
 
-// Single global Web Audio Context instance
 let globalAudioCtx: AudioContext | null = null;
 
+// Synchronous unlock for the Web Audio Context on direct touch/click
 export const initAudio = (): AudioContext | null => {
   if (typeof window === 'undefined') return null;
 
@@ -20,15 +20,15 @@ export const initAudio = (): AudioContext | null => {
       void globalAudioCtx.resume();
     }
 
-    // Single-frame silent buffer unlock for iOS WebKit
+    // Play a silent buffer to force-unlock iOS WebKit audio bus
     try {
-      const silentBuffer = globalAudioCtx.createBuffer(1, 1, 22050);
+      const buffer = globalAudioCtx.createBuffer(1, 1, 22050);
       const source = globalAudioCtx.createBufferSource();
-      source.buffer = silentBuffer;
+      source.buffer = buffer;
       source.connect(globalAudioCtx.destination);
       source.start(0);
     } catch {
-      // Ignore initial touch state locks
+      // Ignore initial unlock warnings
     }
   }
 
@@ -52,7 +52,6 @@ export const useAudio = () => {
     return ctx;
   }, []);
 
-  // Guarantee context is running before scheduling synth nodes
   const ensureContextReady = useCallback(async (): Promise<AudioContext | null> => {
     if (typeof window === 'undefined') return null;
     const ctx = handleInitAudio();
@@ -75,62 +74,65 @@ export const useAudio = () => {
       try {
         navigator.vibrate(pattern);
       } catch {
-        // Silently ignore unsupported devices
+        // Ignore unsupported hardware
       }
     }
   }, []);
 
-  // Web Audio Tone Synthesizer
-  const playBeep = useCallback(
-    async (freq = 800, duration = 0.15, type: OscillatorType = 'sine') => {
-      try {
-        const ctx = await ensureContextReady();
-        if (!ctx || ctx.state !== 'running') return;
+  // Universal Synchronous Beep Synthesizer
+  const playBeep = useCallback((freq = 800, duration = 0.15, type: OscillatorType = 'sine') => {
+    try {
+      const ctx = handleInitAudio();
+      if (!ctx) return;
 
-        const osc = ctx.createOscillator();
-        const gain = ctx.createGain();
-
-        osc.type = type;
-        osc.frequency.setValueAtTime(freq, ctx.currentTime);
-
-        gain.gain.setValueAtTime(0.3, ctx.currentTime);
-        gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + duration);
-
-        osc.connect(gain);
-        gain.connect(ctx.destination);
-
-        osc.start(ctx.currentTime);
-        osc.stop(ctx.currentTime + duration);
-      } catch (e) {
-        console.warn('Audio playBeep failed:', e);
+      if (ctx.state === 'suspended') {
+        void ctx.resume();
       }
-    },
-    [ensureContextReady]
-  );
 
-  const playLongBeep = useCallback(
-    (freq = 1000, duration = 0.6, type: OscillatorType = 'sine') => {
-      void playBeep(freq, duration, type);
-    },
-    [playBeep]
-  );
+      const now = ctx.currentTime;
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+
+      osc.type = type;
+      osc.frequency.setValueAtTime(freq, now);
+
+      gain.gain.setValueAtTime(0.3, now);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + duration);
+
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+
+      osc.start(now);
+      osc.stop(now + duration);
+    } catch (e) {
+      console.warn('Audio playBeep failed:', e);
+    }
+  }, [handleInitAudio]);
+
+  const playLongBeep = useCallback((freq = 1000, duration = 0.6, type: OscillatorType = 'sine') => {
+    playBeep(freq, duration, type);
+  }, [playBeep]);
 
   const playHalfway = useCallback(() => {
-    void playBeep(600, 0.2, 'sine');
+    playBeep(600, 0.2, 'sine');
     setTimeout(() => {
-      void playBeep(800, 0.3, 'sine');
+      playBeep(800, 0.3, 'sine');
     }, 120);
   }, [playBeep]);
 
   const playTenSeconds = useCallback(() => {
-    void playBeep(900, 0.2, 'square');
+    playBeep(900, 0.2, 'square');
   }, [playBeep]);
 
-  // Layered Boxing Ring Bell
-  const playBell = useCallback(async () => {
+  // Synchronous Layered Boxing Ring Bell
+  const playBell = useCallback(() => {
     try {
-      const ctx = await ensureContextReady();
-      if (!ctx || ctx.state !== 'running') return;
+      const ctx = handleInitAudio();
+      if (!ctx) return;
+
+      if (ctx.state === 'suspended') {
+        void ctx.resume();
+      }
 
       const freqs = [800, 1230, 1640];
       const now = ctx.currentTime;
@@ -155,9 +157,9 @@ export const useAudio = () => {
     } catch (e) {
       console.warn('Audio playBell failed:', e);
     }
-  }, [ensureContextReady]);
+  }, [handleInitAudio]);
 
-  // Clean TTS Execution
+  // Text-To-Speech Execution
   const speakText = useCallback((text: string, priority?: string, onEnd?: () => void) => {
     if (typeof window === 'undefined' || !('speechSynthesis' in window)) {
       if (onEnd) onEnd();
@@ -171,7 +173,6 @@ export const useAudio = () => {
       speechIntervalRef.current = null;
     }
 
-    // Only cancel ongoing speech if explicitly high priority and currently active
     if (priority === 'high' && synth.speaking) {
       synth.cancel();
     }
@@ -213,7 +214,7 @@ export const useAudio = () => {
 
     synth.speak(utterance);
 
-    // Safari/Chrome keepalive check without forced pause toggles
+    // Keep-alive check for long voice queues without toggling pause/resume
     speechIntervalRef.current = setInterval(() => {
       if (!synth.speaking) {
         handleSpeechEnd();
@@ -228,7 +229,6 @@ export const useAudio = () => {
     return window.speechSynthesis.speaking;
   }, []);
 
-  // Preload TTS voices
   useEffect(() => {
     if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
       const synth = window.speechSynthesis;
