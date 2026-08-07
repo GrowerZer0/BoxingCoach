@@ -137,43 +137,24 @@ export const useAudio = () => {
   }, [initAudio]);
 
 // Text-To-Speech Callout
-  const speak = useCallback((text: string, rate = 1.1) => {
+  const speak = useCallback((text: string) => {
     if (typeof window === 'undefined' || !('speechSynthesis' in window)) return;
 
-    try {
-      const synth = window.speechSynthesis;
-      // Always cancel any ongoing speech and resume if paused before speaking new text
-      synth.cancel();
-      if (synth.paused) {
-        synth.resume();
-      }
+    const synth = window.speechSynthesis;
+    synth.cancel();
+    synth.resume(); // Ensure speech is not paused
 
-      const utterance = new SpeechSynthesisUtterance(text);
-      utterance.rate = rate;
-      utterance.pitch = 1.0;
-      utterance.volume = 1.0;
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.rate = 1.1; // Default rate for clear speech
+    utterance.volume = 1.0; // Full volume
 
-      const voices = synth.getVoices();
-      if (voices.length > 0) {
-        const defaultVoice = voices.find((v) => v.lang.startsWith('en')) || voices[0];
-        utterance.voice = defaultVoice;
-      }
-
-      activeUtteranceRef.current = utterance;
-
-      utterance.onend = () => {
-        activeUtteranceRef.current = null;
-      };
-
-      utterance.onerror = (e) => {
-        console.warn('SpeechSynthesis error:', e);
-        activeUtteranceRef.current = null;
-      };
-
-      synth.speak(utterance);
-    } catch (e) {
-      console.warn('SpeechSynthesis speak failed:', e);
+    // Select an English voice if available, otherwise use the first available voice
+    const voices = synth.getVoices();
+    if (voices.length > 0) {
+      utterance.voice = voices.find(v => v.lang.startsWith('en')) || voices[0];
     }
+
+    synth.speak(utterance);
   }, []);
 
   // Check if Text-To-Speech is active

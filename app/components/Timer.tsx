@@ -188,6 +188,9 @@ export default function Timer(props: TimerProps) {
     if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
       window.speechSynthesis.cancel();
       window.speechSynthesis.resume();
+      // Force unlock speech synthesis audio context on user click
+      const silentUtterance = new SpeechSynthesisUtterance('');
+      window.speechSynthesis.speak(silentUtterance);
     }
     audio.initAudio();
     audio.hapticFeedback(15);
