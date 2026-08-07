@@ -3,6 +3,7 @@
 import { useCallback, useRef, useEffect } from 'react';
 
 let globalAudioCtx: AudioContext | null = null;
+let activeAudioSources: Set<AudioBufferSourceNode> = new Set(); // Global set to track all active sources for speakText
 
 // Synchronous unlock for Web Audio Context
 export const initAudio = (): AudioContext | null => {
@@ -27,6 +28,9 @@ export const initAudio = (): AudioContext | null => {
       source.buffer = buffer;
       source.connect(globalAudioCtx.destination);
       source.start(0);
+      source.onended = () => {
+        source.disconnect();
+      };
     } catch {
       // Ignore initial unlock errors
     }
@@ -35,7 +39,20 @@ export const initAudio = (): AudioContext | null => {
   return globalAudioCtx;
 };
 
-export const useAudio = () => {
+// Utility to slugify text
+const slugify = (text: string) => {
+  return text
+    .toString()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .trim()
+    .replace(/\s+/g, '-')
+    .replace(/[^\w-]+/g, '')
+    .replace(/--+/g, '-');
+};
+
+export function useAudio() { // Changed to named function export
   const audioCtxRef = useRef<AudioContext | null>(null);
   const audioBufferCacheRef = useRef<Map<string, AudioBuffer>>(new Map());
 
@@ -45,7 +62,7 @@ export const useAudio = () => {
     }
   }, []);
 
-  const handleInitAudio = useCallback(() => {
+  const handleInitAudio = useCallback((): AudioContext | null => {
     const ctx = initAudio();
     audioCtxRef.current = ctx;
     return ctx;
@@ -165,19 +182,6 @@ export const useAudio = () => {
     }
   }, [handleInitAudio, ensureContextRunning]);
 
-  // Utility to slugify text
-  const slugify = (text: string) => {
-    return text
-      .toString()
-      .normalize('NFD')
-      .replace(/[\u0300-\u036f]/g, '')
-      .toLowerCase()
-      .trim()
-      .replace(/\s+/g, '-')
-      .replace(/[^\w-]+/g, '')
-      .replace(/--+/g, '-');
-  };
-
   // Text-To-Speech using pre-generated audio files
   const speakText = useCallback(async (text: string, _priority?: string, onEnd?: () => void) => {
     if (typeof window === 'undefined') {
@@ -200,7 +204,12 @@ export const useAudio = () => {
         const source = ctx.createBufferSource();
         source.buffer = buffer;
         source.connect(ctx.destination);
+        
+        activeAudioSources.add(source); // Track active source
+
         source.onended = () => {
+          activeAudioSources.delete(source); // Remove when ended
+          source.disconnect(); // Clean up
           onEnd?.();
         };
         source.start(0);
@@ -227,6 +236,54 @@ export const useAudio = () => {
     }
   }, [handleInitAudio, ensureContextRunning]);
 
+  const isSpeaking = useCallback(() => {
+    // Check if there are any active audio sources from speakText
+    return activeAudioSources.size > 0;
+  }, []);
+
+  const cancel = useCallback(() => {
+    // Stop all active audio sources
+    activeAudioSources.forEach(source => {
+      try {
+        source.stop();
+        source.disconnect();
+      } catch (e) {
+        console.warn('Error stopping audio source:', e);
+      }
+    });
+    activeAudioSources.clear();
+  }, []);
+
+  const preloadAudio = useCallback(async (texts: string[]) => {
+    if (typeof window === 'undefined') return;
+    const ctx = await ensureContextReady();
+    if (!ctx) {
+      console.warn('AudioContext not ready for preloading.');
+      return;
+    }
+
+    const cache = audioBufferCacheRef.current;
+    const promises = texts.map(async (text) => {
+      const slug = slugify(text);
+      if (cache.has(slug)) {
+        return; // Already cached
+      }
+      const audioPath = `/audio/${slug}.mp3`;
+      try {
+        const response = await fetch(audioPath);
+        if (!response.ok) {
+          throw new Error(`Failed to fetch audio file for preloading: ${audioPath}, status: ${response.status}`);
+        }
+        const arrayBuffer = await response.arrayBuffer();
+        const audioBuffer = await ctx.decodeAudioData(arrayBuffer);
+        cache.set(slug, audioBuffer);
+      } catch (e) {
+        console.warn(`Failed to preload audio for "${text}":`, e);
+      }
+    });
+    await Promise.all(promises);
+  }, [ensureContextReady]);
+
   return {
     initAudio: handleInitAudio,
     ensureContextReady,
@@ -238,5 +295,10 @@ export const useAudio = () => {
     playHalfway,
     playTenSeconds,
     speakText,
+    isSpeaking, // New
+    cancel,     // New
+    preloadAudio, // New
   };
-};
+}
+
+export default useAudio; // Default export

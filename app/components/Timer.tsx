@@ -350,7 +350,7 @@ const handleStart = () => {
           {!isActive && isRunning && (
             <span className="text-yellow-500">💤 Screen may sleep</span>
           )}
-          {audio.isSpeaking() && (
+          {audio.isSpeaking() && ( // isSpeaking is now available
             <span className="text-blue-500">🔊 Speaking...</span>
           )}
           {props.currentWorkoutId && (
