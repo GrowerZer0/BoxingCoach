@@ -164,21 +164,23 @@ export function useTimer(options: UseTimerOptions = {}) {
 
       const onSpeechEnd = () => {
         isSpeakingRef.current = false;
+        if (calloutTimerRef.current) clearTimeout(calloutTimerRef.current);
         calloutTimerRef.current = setTimeout(() => {
           scheduleNextCallout();
         }, postSpeechRest);
       };
 
-      isSpeakingRef.current = true;
+isSpeakingRef.current = true;
 
-      if (audio.speakText && settings.enableVoice) {
-        audio.speakText(speechText, 'high', onSpeechEnd);
-      } else {
-        isSpeakingRef.current = false;
-        calloutTimerRef.current = setTimeout(() => {
-          scheduleNextCallout();
-        }, postSpeechRest);
-      }
+if (audio.speakText && settings.enableVoice) {
+  audio.speakText(speechText, 'high', onSpeechEnd);
+} else {
+  isSpeakingRef.current = false;
+  if (calloutTimerRef.current) clearTimeout(calloutTimerRef.current);
+  calloutTimerRef.current = setTimeout(() => {
+    scheduleNextCallout();
+  }, postSpeechRest);
+}
       audio.hapticFeedback?.([15, 30, 15]);
       
     }, delayBeforeSpeech);

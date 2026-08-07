@@ -168,31 +168,31 @@ export default function Timer(props: TimerProps) {
     }
   };
 
-const handleStart = async () => {
-  // 1. Prime iOS Web Speech with actual text (iOS ignores empty strings)
+const handleStart = () => {
+  // 1. SYNCHRONOUS UNLOCK FRAME (Must run in the immediate touch event)
+  
+  // A. Unlock Web Audio Context (Do NOT await - fire and forget)
+  audio.initAudio?.();
+  audio.ensureContextReady?.(); 
+  audio.hapticFeedback?.(15);
+
+  // B. Unlock iOS Web Speech
   if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
-    window.speechSynthesis.cancel();
-    window.speechSynthesis.resume();
+    const synth = window.speechSynthesis;
+    if (synth.paused) synth.resume();
 
+    // Do NOT call synth.cancel() here - it cancels the speak call on iOS Safari
     const unlockUtterance = new SpeechSynthesisUtterance('ready');
-    unlockUtterance.volume = 0.1; // Plays low-volume word to force iOS voice engine load
-    unlockUtterance.rate = 1.0;
-    window.speechSynthesis.speak(unlockUtterance);
+    unlockUtterance.volume = 0.05; // Audible enough for iOS to load engine, quiet enough to ignore
+    unlockUtterance.rate = 2.0;    // Fast rate so it clears immediately
+    synth.speak(unlockUtterance);
   }
 
-  // 2. Synchronously initialize audio and wake lock before any await calls
-  if (audio?.initAudio) {
-    audio.initAudio();
-  }
-  if (audio?.hapticFeedback) {
-    audio.hapticFeedback(15);
-  }
+  // C. Engage Wake Lock & Start Timer
   requestWakeLock();
-
-  // 3. Start timer immediately to stay inside the touch event window
   startTimer();
 
-  // 4. Run database sync in the background so it doesn't block audio execution
+  // 2. BACKGROUND ASYNC WORK (Runs AFTER audio & timer are safely initialized)
   if (props.onWorkoutStart) {
     props.onWorkoutStart().catch(error => {
       console.error('Failed to start workout record in Supabase:', error);

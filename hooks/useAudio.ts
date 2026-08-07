@@ -175,14 +175,14 @@ export const useAudio = () => {
 
     const synth = window.speechSynthesis;
 
-    if (speechIntervalRef.current) {
-      clearInterval(speechIntervalRef.current);
-      speechIntervalRef.current = null;
-    }
-
-    if (priority === 'high' && synth.speaking) {
+// DON'T call synth.cancel() aggressively unless priority === 'high' AND synth.speaking
+  if (priority === 'high' && synth.speaking) {
+    try {
       synth.cancel();
+    } catch {
+      // Ignore cancel errors
     }
+  }
 
     const utterance = new SpeechSynthesisUtterance(text);
     utterance.rate = 1.1;
@@ -215,8 +215,21 @@ export const useAudio = () => {
     utterance.onend = handleSpeechEnd;
     utterance.onerror = handleSpeechEnd;
 
-    synth.speak(utterance);
-  }, []);
+// Ensure synth is not stuck in a paused state from previous audio interruptions
+  if (synth.paused) {
+    synth.resume();
+  }
+
+  synth.speak(utterance);
+
+  // iOS Keep-Alive Safety Guard (without destroying Web Audio)
+  if (speechIntervalRef.current) clearInterval(speechIntervalRef.current);
+  speechIntervalRef.current = setInterval(() => {
+    if (!synth.speaking && !hasEnded) {
+      handleSpeechEnd();
+    }
+  }, 1000);
+}, []);
 
   const isSpeaking = useCallback(() => {
     if (typeof window === 'undefined' || !('speechSynthesis' in window)) return false;
