@@ -2,48 +2,74 @@
 
 import { useCallback, useRef, useEffect } from 'react';
 
+// Module-level Web Audio Context instance to persist across re-renders
+let globalAudioCtx: AudioContext | null = null;
+
+// Standalone initAudio function to unlock Web Audio API on physical touch
+export const initAudio = () => {
+  if (typeof window === 'undefined') return null;
+
+  const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+
+  if (AudioContextClass) {
+    if (!globalAudioCtx || globalAudioCtx.state === 'closed') {
+      globalAudioCtx = new AudioContextClass();
+    }
+
+    if (globalAudioCtx.state === 'suspended') {
+      globalAudioCtx.resume().catch((err) => console.warn('AudioContext resume failed:', err));
+    }
+
+    // Play a 1-frame silent buffer to permanently transition audio state to 'running' on iOS
+    try {
+      const silentBuffer = globalAudioCtx.createBuffer(1, 1, 22050);
+      const source = globalAudioCtx.createBufferSource();
+      source.buffer = silentBuffer;
+      source.connect(globalAudioCtx.destination);
+      source.start(0);
+    } catch (e) {
+      // Ignore initial touch state warnings
+    }
+  }
+
+  return globalAudioCtx;
+};
+
 export const useAudio = () => {
   const audioCtxRef = useRef<AudioContext | null>(null);
   const voicesRef = useRef<SpeechSynthesisVoice[]>([]);
-  // Initialize or resume AudioContext on user interaction
-  const initAudio = useCallback(() => {
-    if (typeof window === 'undefined') return;
+  const speechIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
-    if (!audioCtxRef.current) {
-      const AudioCtxClass = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
-      if (AudioCtxClass) {
-        audioCtxRef.current = new AudioCtxClass();
-      }
+  // Sync ref with global context
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      audioCtxRef.current = globalAudioCtx;
     }
+  }, []);
 
-    if (audioCtxRef.current && audioCtxRef.current.state === 'suspended') {
-      audioCtxRef.current.resume();
-    }
-
-    // Warm up speech synthesis
-    if ('speechSynthesis' in window) {
-      window.speechSynthesis.getVoices();
-    }
+  const handleInitAudio = useCallback(() => {
+    const ctx = initAudio();
+    audioCtxRef.current = ctx;
+    return ctx;
   }, []);
 
   // Async helper to guarantee AudioContext is running before playing audio
   const ensureContextReady = useCallback(async () => {
     if (typeof window === 'undefined') return;
-    initAudio();
-    if (audioCtxRef.current && audioCtxRef.current.state === 'suspended') {
+    const ctx = handleInitAudio();
+    if (ctx && ctx.state === 'suspended') {
       try {
-        await audioCtxRef.current.resume();
+        await ctx.resume();
       } catch (e) {
         console.warn('Failed to resume AudioContext:', e);
       }
     }
-  }, [initAudio]);
+  }, [handleInitAudio]);
 
   // Check if AudioContext is initialized and running
   const isContextReady = useCallback(() => {
-    return audioCtxRef.current !== null && audioCtxRef.current.state === 'running';
+    return globalAudioCtx !== null && globalAudioCtx.state === 'running';
   }, []);
-
 
   // Safe Haptic Feedback via Vibration API
   const hapticFeedback = useCallback((pattern: number | number[] = 10) => {
@@ -51,7 +77,7 @@ export const useAudio = () => {
       try {
         navigator.vibrate(pattern);
       } catch (e) {
-        // Silently ignore if unsupported or blocked
+        // Silently ignore if unsupported
       }
     }
   }, []);
@@ -59,9 +85,12 @@ export const useAudio = () => {
   // Web Audio Standard Beep
   const playBeep = useCallback((freq = 800, duration = 0.15, type: OscillatorType = 'sine') => {
     try {
-      initAudio();
-      const ctx = audioCtxRef.current;
+      const ctx = handleInitAudio();
       if (!ctx) return;
+
+      if (ctx.state === 'suspended') {
+        ctx.resume();
+      }
 
       const osc = ctx.createOscillator();
       const gain = ctx.createGain();
@@ -80,7 +109,7 @@ export const useAudio = () => {
     } catch (e) {
       console.warn('Audio playBeep failed:', e);
     }
-  }, [initAudio]);
+  }, [handleInitAudio]);
 
   // Web Audio Sustained Long Beep
   const playLongBeep = useCallback((freq = 1000, duration = 0.6, type: OscillatorType = 'sine') => {
@@ -109,9 +138,12 @@ export const useAudio = () => {
   // Web Audio Boxing Bell Synthesizer
   const playBell = useCallback(() => {
     try {
-      initAudio();
-      const ctx = audioCtxRef.current;
+      const ctx = handleInitAudio();
       if (!ctx) return;
+
+      if (ctx.state === 'suspended') {
+        ctx.resume();
+      }
 
       const freqs = [800, 1230, 1640];
       freqs.forEach((freq) => {
@@ -133,46 +165,74 @@ export const useAudio = () => {
     } catch (e) {
       console.warn('Audio playBell failed:', e);
     }
-  }, [initAudio]);
+  }, [handleInitAudio]);
 
   // Text-To-Speech Callout
   const speakText = useCallback((text: string, priority?: string, onEnd?: () => void) => {
-    if (typeof window === 'undefined' || !('speechSynthesis' in window)) return;
+    if (typeof window === 'undefined' || !('speechSynthesis' in window)) {
+      if (onEnd) onEnd();
+      return;
+    }
 
     const synth = window.speechSynthesis;
-    
+
+    if (speechIntervalRef.current) {
+      clearInterval(speechIntervalRef.current);
+      speechIntervalRef.current = null;
+    }
+
     if (priority === 'high') {
       synth.cancel();
     }
 
     const utterance = new SpeechSynthesisUtterance(text);
-    utterance.rate = 1.1; // Adjusted rate for realism
+    utterance.rate = 1.1;
     utterance.volume = 1.0;
 
-    // Voice selection logic
     const voices = voicesRef.current.length > 0 ? voicesRef.current : synth.getVoices();
-    const selectedVoice = 
-      voices.find(v => v.name.toLowerCase().includes('samantha')) ||
-      voices.find(v => v.lang.startsWith('en') && v.localService) ||
-      voices.find(v => v.lang.startsWith('en')) ||
+    const selectedVoice =
+      voices.find((v) => v.name.toLowerCase().includes('samantha')) ||
+      voices.find((v) => v.lang.startsWith('en') && v.localService) ||
+      voices.find((v) => v.lang.startsWith('en')) ||
       voices[0];
 
     if (selectedVoice) {
       utterance.voice = selectedVoice;
     }
-    
-    // Set onEnd callback for when speech finishes or errors
-    if (onEnd) {
-      utterance.onend = () => onEnd();
-      utterance.onerror = () => onEnd(); // Fallback so timer doesn't stall on speech error
-    }
 
-    // Ensure synth is resumed before speaking
+    let hasEnded = false;
+    const handleSpeechEnd = () => {
+      if (hasEnded) return;
+      hasEnded = true;
+
+      if (speechIntervalRef.current) {
+        clearInterval(speechIntervalRef.current);
+        speechIntervalRef.current = null;
+      }
+
+      if (onEnd) {
+        onEnd();
+      }
+    };
+
+    utterance.onend = handleSpeechEnd;
+    utterance.onerror = handleSpeechEnd;
+
     if (synth.paused) {
       synth.resume();
     }
 
     synth.speak(utterance);
+
+    // Chrome workaround: Keepalive heartbeat so speech doesn't randomly pause
+    speechIntervalRef.current = setInterval(() => {
+      if (!synth.speaking) {
+        handleSpeechEnd();
+      } else {
+        synth.pause();
+        synth.resume();
+      }
+    }, 5000);
   }, []);
 
   // Check if Text-To-Speech is active
@@ -181,8 +241,7 @@ export const useAudio = () => {
     return window.speechSynthesis.speaking;
   }, []);
 
-
-  // Preload TTS voices and update if voices change
+  // Preload TTS voices
   useEffect(() => {
     if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
       const synth = window.speechSynthesis;
@@ -191,21 +250,20 @@ export const useAudio = () => {
         voicesRef.current = synth.getVoices();
       };
 
-      // Initial preload
       loadVoices();
-
-      // Update voices if they change (e.g., new languages installed)
       synth.onvoiceschanged = loadVoices;
 
-      // Clean up the event listener
       return () => {
         synth.onvoiceschanged = null;
       };
     }
-  }, []); // Empty dependency array means this runs once on mount and cleans up on unmount
+  }, []);
 
   useEffect(() => {
     return () => {
+      if (speechIntervalRef.current) {
+        clearInterval(speechIntervalRef.current);
+      }
       if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
         window.speechSynthesis.cancel();
       }
@@ -213,7 +271,7 @@ export const useAudio = () => {
   }, []);
 
   return {
-    initAudio,
+    initAudio: handleInitAudio,
     ensureContextReady,
     isContextReady,
     hapticFeedback,

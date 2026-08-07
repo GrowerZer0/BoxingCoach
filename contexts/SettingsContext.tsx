@@ -1,6 +1,6 @@
 'use client';
 
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { getSupabaseClient } from '@/lib/supabase';
 import { useAuth } from '@/lib/auth';
 import { ROUTINE_TEMPLATES, RoutineTemplate, INTENSITY_PRESETS } from '@/types/workout';
@@ -31,7 +31,7 @@ export interface WorkoutSettings {
 }
 
 const DEFAULT_ROUND_CONFIGS: RoundConfig[] = [
-  ...ROUTINE_TEMPLATES[0].roundConfigs,
+  ...(ROUTINE_TEMPLATES[0]?.roundConfigs || []),
 ];
 
 const DEFAULT_SETTINGS: WorkoutSettings = {
@@ -44,8 +44,42 @@ const DEFAULT_SETTINGS: WorkoutSettings = {
   enableVoice: true,
   showComboDisplay: true,
   enableWakeLock: true,
-  countdownSeconds: 3,
+  countdownSeconds: 10,
   customRoutines: [],
+};
+
+const sanitizeSettings = (raw: any): WorkoutSettings => {
+  if (!raw || typeof raw !== 'object') return DEFAULT_SETTINGS;
+
+  const intensityId =
+    raw.intensityId && VALID_INTENSITIES.includes(raw.intensityId)
+      ? raw.intensityId
+      : 'standard';
+
+  const rounds = typeof raw.rounds === 'number' && raw.rounds > 0 ? raw.rounds : DEFAULT_SETTINGS.rounds;
+  let roundConfigs: RoundConfig[] = Array.isArray(raw.roundConfigs) ? raw.roundConfigs : [...DEFAULT_ROUND_CONFIGS];
+
+  // Align roundConfigs count with rounds
+  if (roundConfigs.length < rounds) {
+    for (let i = roundConfigs.length + 1; i <= rounds; i++) {
+      roundConfigs.push({
+        roundNumber: i,
+        name: `Round ${i}`,
+        combos: DEFAULT_ROUND_CONFIGS[0]?.combos || [],
+      });
+    }
+  } else if (roundConfigs.length > rounds) {
+    roundConfigs = roundConfigs.slice(0, rounds);
+  }
+
+  return {
+    ...DEFAULT_SETTINGS,
+    ...raw,
+    intensityId,
+    rounds,
+    roundConfigs,
+    customRoutines: Array.isArray(raw.customRoutines) ? raw.customRoutines : [],
+  };
 };
 
 interface SettingsContextType {
@@ -69,19 +103,18 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
 
   // Load settings from localStorage on mount
   useEffect(() => {
-    const savedSettings = localStorage.getItem('workoutSettings');
-    if (savedSettings) {
-      try {
+    try {
+      const savedSettings = localStorage.getItem('workoutSettings');
+      if (savedSettings) {
         const parsed = JSON.parse(savedSettings);
-        if (parsed.intensityId && !VALID_INTENSITIES.includes(parsed.intensityId)) {
-          parsed.intensityId = 'standard';
-        }
-        setSettings({ ...DEFAULT_SETTINGS, ...parsed });
-      } catch (error) {
-        console.error('Failed to load settings from localStorage:', error);
+        setSettings(sanitizeSettings(parsed));
       }
+    } catch (error) {
+      console.error('Failed to load settings from localStorage:', error);
+      setSettings(DEFAULT_SETTINGS);
+    } finally {
+      setIsLoaded(true);
     }
-    setIsLoaded(true);
   }, []);
 
   // Save to localStorage whenever settings change
@@ -91,26 +124,18 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
     }
   }, [settings, isLoaded]);
 
-const updateSettings = async (newSettings: Partial<WorkoutSettings>) => {
-  if (newSettings.intensityId && !VALID_INTENSITIES.includes(newSettings.intensityId)) {
-    console.warn(`Invalid intensity: ${newSettings.intensityId}, falling back to 'standard'`);
-    newSettings.intensityId = 'standard';
-  }
-
-  setSettings(prev => {
-    const next = { ...prev, ...newSettings };
-    if (newSettings.rounds && next.roundConfigs.length > newSettings.rounds) {
-      next.roundConfigs = next.roundConfigs.slice(0, newSettings.rounds);
-    }
-    return next;
-  });
-};
+  const updateSettings = async (newSettings: Partial<WorkoutSettings>) => {
+    setSettings(prev => {
+      const merged = { ...prev, ...newSettings };
+      return sanitizeSettings(merged);
+    });
+  };
 
   const updateRoundConfig = async (roundNumber: number, config: Partial<RoundConfig>) => {
     setSettings(prev => ({
       ...prev,
-      roundConfigs: prev.roundConfigs.map(rc => 
-        rc.roundNumber === roundNumber 
+      roundConfigs: prev.roundConfigs.map(rc =>
+        rc.roundNumber === roundNumber
           ? { ...rc, ...config }
           : rc
       )
@@ -118,18 +143,27 @@ const updateSettings = async (newSettings: Partial<WorkoutSettings>) => {
   };
 
   const addRoundConfig = async (config: RoundConfig) => {
-    setSettings(prev => ({
-      ...prev,
-      roundConfigs: [...prev.roundConfigs, config],
-      rounds: Math.max(prev.rounds, config.roundNumber)
-    }));
+    setSettings(prev => {
+      const updatedConfigs = [...prev.roundConfigs, config];
+      const updatedRounds = Math.max(prev.rounds, config.roundNumber);
+      return sanitizeSettings({
+        ...prev,
+        rounds: updatedRounds,
+        roundConfigs: updatedConfigs,
+      });
+    });
   };
 
   const removeRoundConfig = async (roundNumber: number) => {
-    setSettings(prev => ({
-      ...prev,
-      roundConfigs: prev.roundConfigs.filter(rc => rc.roundNumber !== roundNumber)
-    }));
+    setSettings(prev => {
+      const updatedConfigs = prev.roundConfigs.filter(rc => rc.roundNumber !== roundNumber);
+      const updatedRounds = Math.max(1, prev.rounds - 1);
+      return sanitizeSettings({
+        ...prev,
+        rounds: updatedRounds,
+        roundConfigs: updatedConfigs,
+      });
+    });
   };
 
   const saveCustomRoutine = async (name: string, focus?: string) => {
@@ -172,8 +206,8 @@ const updateSettings = async (newSettings: Partial<WorkoutSettings>) => {
   };
 
   const saveToSupabase = async () => {
-    if (!user) return;
-    
+    if (!user || !supabase) return;
+
     try {
       const result = await (supabase
         .from('user_settings') as any)
@@ -182,7 +216,7 @@ const updateSettings = async (newSettings: Partial<WorkoutSettings>) => {
           settings: settings,
           updated_at: new Date().toISOString()
         });
-      
+
       if (result.error) throw result.error;
       console.log('Settings saved to Supabase');
     } catch (error) {
@@ -190,30 +224,33 @@ const updateSettings = async (newSettings: Partial<WorkoutSettings>) => {
     }
   };
 
-  const loadFromSupabase = async () => {
-    if (!user) return;
-    
+  const loadFromSupabase = useCallback(async () => {
+    if (!user || !supabase) return;
+
     try {
       const result = await (supabase
         .from('user_settings') as any)
         .select('settings')
         .eq('user_id', user.id)
         .single();
-      
+
       if (result.error) throw result.error;
       if (result.data?.settings) {
-        const parsedSettings = result.data.settings;
-        if (parsedSettings.intensityId && !VALID_INTENSITIES.includes(parsedSettings.intensityId)) {
-          parsedSettings.intensityId = 'standard';
-        }
-        setSettings(prev => ({ ...prev, ...parsedSettings }));
-        localStorage.setItem('workoutSettings', JSON.stringify(parsedSettings));
+        const sanitized = sanitizeSettings(result.data.settings);
+        setSettings(sanitized);
+        localStorage.setItem('workoutSettings', JSON.stringify(sanitized));
         console.log('Settings loaded from Supabase');
       }
     } catch (error) {
       console.error('Failed to load settings from Supabase:', error);
     }
-  };
+  }, [user]);
+
+  useEffect(() => {
+    if (user) {
+      loadFromSupabase();
+    }
+  }, [user, loadFromSupabase]);
 
   const value = {
     settings,
