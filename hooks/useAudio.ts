@@ -37,8 +37,7 @@ export const initAudio = (): AudioContext | null => {
 
 export const useAudio = () => {
   const audioCtxRef = useRef<AudioContext | null>(null);
-  const voicesRef = useRef<SpeechSynthesisVoice[]>([]);
-  const speechIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const audioBufferCacheRef = useRef<Map<string, AudioBuffer>>(new Map());
 
   useEffect(() => {
     if (typeof window !== 'undefined') {
@@ -166,103 +165,67 @@ export const useAudio = () => {
     }
   }, [handleInitAudio, ensureContextRunning]);
 
-  // Text-To-Speech Execution with Safe Audio Bus Handover
-  const speakText = useCallback((text: string, priority?: string, onEnd?: () => void) => {
-    if (typeof window === 'undefined' || !('speechSynthesis' in window)) {
-      if (onEnd) onEnd();
+  // Utility to slugify text
+  const slugify = (text: string) => {
+    return text
+      .toString()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toLowerCase()
+      .trim()
+      .replace(/\s+/g, '-')
+      .replace(/[^\w-]+/g, '')
+      .replace(/--+/g, '-');
+  };
+
+  // Text-To-Speech using pre-generated audio files
+  const speakText = useCallback(async (text: string, _priority?: string, onEnd?: () => void) => {
+    if (typeof window === 'undefined') {
+      onEnd?.();
       return;
     }
 
-    const synth = window.speechSynthesis;
+    const ctx = handleInitAudio();
+    if (!ctx) {
+      onEnd?.();
+      return;
+    }
 
-// DON'T call synth.cancel() aggressively unless priority === 'high' AND synth.speaking
-  if (priority === 'high' && synth.speaking) {
+    const slug = slugify(text);
+    const audioPath = `/audio/${slug}.mp3`;
+    const cache = audioBufferCacheRef.current;
+
+    const playBuffer = (buffer: AudioBuffer) => {
+      ensureContextRunning(ctx, () => {
+        const source = ctx.createBufferSource();
+        source.buffer = buffer;
+        source.connect(ctx.destination);
+        source.onended = () => {
+          onEnd?.();
+        };
+        source.start(0);
+      });
+    };
+
+    if (cache.has(slug)) {
+      playBuffer(cache.get(slug)!);
+      return;
+    }
+
     try {
-      synth.cancel();
-    } catch {
-      // Ignore cancel errors
-    }
-  }
-
-    const utterance = new SpeechSynthesisUtterance(text);
-    utterance.rate = 1.1;
-    utterance.volume = 1.0;
-
-    const voices = voicesRef.current.length > 0 ? voicesRef.current : synth.getVoices();
-    const selectedVoice =
-      voices.find((v) => v.name.toLowerCase().includes('samantha')) ||
-      voices.find((v) => v.lang.startsWith('en') && v.localService) ||
-      voices.find((v) => v.lang.startsWith('en')) ||
-      voices[0];
-
-    if (selectedVoice) {
-      utterance.voice = selectedVoice;
-    }
-
-    let hasEnded = false;
-    const handleSpeechEnd = () => {
-      if (hasEnded) return;
-      hasEnded = true;
-
-      if (speechIntervalRef.current) {
-        clearInterval(speechIntervalRef.current);
-        speechIntervalRef.current = null;
+      const response = await fetch(audioPath);
+      if (!response.ok) {
+        throw new Error(`Failed to fetch audio file: ${audioPath}, status: ${response.status}`);
       }
-
-      if (onEnd) onEnd();
-    };
-
-    utterance.onend = handleSpeechEnd;
-    utterance.onerror = handleSpeechEnd;
-
-// Ensure synth is not stuck in a paused state from previous audio interruptions
-  if (synth.paused) {
-    synth.resume();
-  }
-
-  synth.speak(utterance);
-
-  // iOS Keep-Alive Safety Guard (without destroying Web Audio)
-  if (speechIntervalRef.current) clearInterval(speechIntervalRef.current);
-  speechIntervalRef.current = setInterval(() => {
-    if (!synth.speaking && !hasEnded) {
-      handleSpeechEnd();
+      const arrayBuffer = await response.arrayBuffer();
+      const audioBuffer = await ctx.decodeAudioData(arrayBuffer);
+      cache.set(slug, audioBuffer);
+      playBuffer(audioBuffer);
+    } catch (e) {
+      console.warn(`Failed to load or play audio for "${text}":`, e);
+      onEnd?.(); // Ensure the callout queue doesn't hang
     }
-  }, 1000);
-}, []);
-
-  const isSpeaking = useCallback(() => {
-    if (typeof window === 'undefined' || !('speechSynthesis' in window)) return false;
-    return window.speechSynthesis.speaking;
-  }, []);
-
-  useEffect(() => {
-    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
-      const synth = window.speechSynthesis;
-
-      const loadVoices = () => {
-        voicesRef.current = synth.getVoices();
-      };
-
-      loadVoices();
-      synth.onvoiceschanged = loadVoices;
-
-      return () => {
-        synth.onvoiceschanged = null;
-      };
-    }
-  }, []);
-
-  useEffect(() => {
-    return () => {
-      if (speechIntervalRef.current) {
-        clearInterval(speechIntervalRef.current);
-      }
-      if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
-        window.speechSynthesis.cancel();
-      }
-    };
-  }, []);
+  }, [handleInitAudio, ensureContextRunning]);
 
   return {
     initAudio: handleInitAudio,
@@ -275,6 +238,5 @@ export const useAudio = () => {
     playHalfway,
     playTenSeconds,
     speakText,
-    isSpeaking,
   };
 };
