@@ -167,29 +167,37 @@ export default function Timer(props: TimerProps) {
     }
   };
 
-  const handleStart = async () => {
-    // Ensure speech synthesis and audio context are active on user interaction
-    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
-      window.speechSynthesis.cancel();
-      window.speechSynthesis.resume();
-      // Force unlock speech synthesis audio context on user click
-      const silentUtterance = new SpeechSynthesisUtterance('');
-      window.speechSynthesis.speak(silentUtterance);
-    }
-    audio.initAudio();
-    audio.hapticFeedback(15);
-    requestWakeLock(); // Request wake lock directly on user interaction
+const handleStart = async () => {
+  // 1. Prime iOS Web Speech with actual text (iOS ignores empty strings)
+  if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+    window.speechSynthesis.cancel();
+    window.speechSynthesis.resume();
 
-    if (props.onWorkoutStart) {
-      try {
-        await props.onWorkoutStart();
-      } catch (error) {
-        console.error('Failed to start workout:', error);
-      }
-    }
-    
-    startTimer();
-  };
+    const unlockUtterance = new SpeechSynthesisUtterance('ready');
+    unlockUtterance.volume = 0.1; // Plays low-volume word to force iOS voice engine load
+    unlockUtterance.rate = 1.0;
+    window.speechSynthesis.speak(unlockUtterance);
+  }
+
+  // 2. Synchronously initialize audio and wake lock before any await calls
+  if (audio?.initAudio) {
+    audio.initAudio();
+  }
+  if (audio?.hapticFeedback) {
+    audio.hapticFeedback(15);
+  }
+  requestWakeLock();
+
+  // 3. Start timer immediately to stay inside the touch event window
+  startTimer();
+
+  // 4. Run database sync in the background so it doesn't block audio execution
+  if (props.onWorkoutStart) {
+    props.onWorkoutStart().catch(error => {
+      console.error('Failed to start workout record in Supabase:', error);
+    });
+  }
+};
 
   const handleEnd = async () => {
     audio.hapticFeedback([30, 30, 30]);
