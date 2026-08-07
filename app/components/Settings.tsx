@@ -239,7 +239,7 @@ export default function Settings() {
               const category = getMoveCategory(move);
               counts[category] += 1;
               return counts;
-            }, { striking: 0, defense: 0, clinch: 0, takedown: 0, ground: 0 });
+}, { striking: 0, defense: 0, clinch: 0, takedown: 0, ground: 0, punch: 0, movement: 0, transition: 0 } as Record<string, number>);
             
             return (
               <div key={config.roundNumber} className="bg-gray-800 p-4 rounded-lg border border-gray-700">

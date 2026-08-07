@@ -1,6 +1,36 @@
-// types/workout.ts
+export type WorkoutType = 'standing_bag' | 'ground_bag' | 'custom';
+export type IntensityLevel = 'flow' | 'standard' | 'intense' | 'counter' | (string & {});
+export type MoveCategory = 'punch' | 'defense' | 'movement' | 'ground' | 'transition' | 'striking' | 'clinch' | 'takedown';
 
-export type MoveCategory = 'striking' | 'defense' | 'clinch' | 'takedown' | 'ground';
+export interface Callout {
+  id: string;
+  text: string;
+  category: MoveCategory;
+}
+
+export interface RoundConfig {
+  roundNumber: number;
+  name: string;
+  combos: string[];
+  duration?: number;
+  round?: number;
+  title?: string;
+  focus?: string;
+}
+
+export interface WorkoutConfig {
+  id: string;
+  name: string;
+  type: WorkoutType;
+  intensity: IntensityLevel;
+  intensityId?: string;
+  rounds: number;
+  workDuration: number;
+  restDuration: number;
+  calloutGapMin: number;
+  calloutGapMax: number;
+  callouts: string[];
+}
 
 export interface IntensityPreset {
   id: string;
@@ -10,297 +40,215 @@ export interface IntensityPreset {
   minDelay: number;
   maxDelay: number;
   punchesPerRound: number;
-  comboComplexity: 'simple' | 'moderate' | 'complex';
   defensiveChance: number;
 }
 
 export interface RoutineTemplate {
   id: string;
   name: string;
-  focus: string;
-  rounds: number;
-  roundDuration: number;
-  restDuration: number;
-  intensityId: string;
-  roundConfigs: {
-    roundNumber: number;
-    name: string;
-    combos: string[];
-    duration?: number;
-  }[];
+  description?: string;
+  focus?: string;
+  rounds?: number;
+  roundDuration?: number;
+  restDuration?: number;
+  intensityId?: string;
   isCustom?: boolean;
+  roundConfigs: RoundConfig[];
 }
 
+// Intensity Preset Definitions
 export const INTENSITY_PRESETS: Record<string, IntensityPreset> = {
-  pressure: {
-    id: 'pressure',
-    name: 'Bag Pressure',
-    description: 'Fight-paced bag work with quick resets and frequent callouts',
-    icon: 'F',
-    minDelay: 1.5,
+  flow: {
+    id: 'flow',
+    name: 'Flow / Technique',
+    description: 'Relaxed pace focused on technique and footwork',
+    icon: '🧘',
+    minDelay: 3.5,
+    maxDelay: 5.0,
+    punchesPerRound: 15,
+    defensiveChance: 0.2,
+  },
+  standard: {
+    id: 'standard',
+    name: 'Standard Boxing',
+    description: 'Realistic pad-work rhythm and steady cadence',
+    icon: '🥊',
+    minDelay: 2.0,
     maxDelay: 3.5,
-    punchesPerRound: 150,
-    comboComplexity: 'complex',
-    defensiveChance: 0.15,
+    punchesPerRound: 25,
+    defensiveChance: 0.35,
+  },
+  intense: {
+    id: 'intense',
+    name: 'Competition Pace',
+    description: 'High-frequency callouts for rapid reactions',
+    icon: '⚡',
+    minDelay: 1.0,
+    maxDelay: 2.0,
+    punchesPerRound: 40,
+    defensiveChance: 0.5,
   },
   counter: {
     id: 'counter',
-    name: 'Technical Pace',
-    description: 'Realistic solo rounds with room to move, defend, and reset',
-    icon: 'C',
-    minDelay: 3.5,
-    maxDelay: 7,
-    punchesPerRound: 90,
-    comboComplexity: 'moderate',
-    defensiveChance: 0.35,
+    name: 'Counter & Reaction',
+    description: 'Defensive callouts followed by immediate counters',
+    icon: '🎯',
+    minDelay: 1.8,
+    maxDelay: 3.2,
+    punchesPerRound: 30,
+    defensiveChance: 0.6,
   },
 };
 
-export const PUNCH_NAMES: Record<string, string> = {
-  '1': 'Jab',
-  '2': 'Cross',
-  '3': 'Lead Hook',
-  '4': 'Rear Hook',
-  '5': 'Lead Uppercut',
-  '6': 'Rear Uppercut',
-  '7': 'Lead Body Hook',
-  '8': 'Rear Body Hook',
-};
-
-export const NUMBER_WORDS: Record<string, string> = {
-  '1': 'One',
-  '2': 'Two',
-  '3': 'Three',
-  '4': 'Four',
-  '5': 'Five',
-  '6': 'Six',
-  '7': 'Seven',
-  '8': 'Eight',
-};
-
-export const DEFENSIVE_MOVES = [
-  'Slip Right',
-  'Slip Left',
-  'Roll Right',
-  'Roll Left',
-  'High Guard',
-  'Body Block',
-  'Parry Jab',
-  'Parry Cross',
-  'Check Hook',
-  'Pivot Right',
-  'Pivot Left',
-  'Step Out',
-  'Reset Stance',
-  'Sprawl',
-  'Frame on Bag',
-  'Circle Off Bag',
-];
-
-export const CLINCH_MOVES = [
-  'Bag Clinch',
-  'Forehead Pressure',
-  'Frame and Knee',
-  'Short Knees',
-  'Shoulder Pressure',
-  'Circle Off Clinch',
-  'Post and Exit',
-  'Dirty Boxing',
-];
-
-export const TAKEDOWN_MOVES = [
-  'Level Change',
-  'Penetration Step',
-  'Single Leg Shadow',
-  'Double Leg Shadow',
-  'Shot to Bag',
-  'Sprawl to Bag',
-  'Snap Down on Bag',
-  'Lift and Turn Bag',
-  'Drive Through Bag',
-];
-
-export const GROUND_MOVES = [
-  'Technical Stand Up',
-  'Hip Escape',
-  'Bridge and Shrimp',
-  'Sit Out',
-  'Bag Mount',
-  'Bag Side Control',
-  'Knee on Bag',
-  'Top Pressure Hold',
-  'Posture and Punch',
-  'Elbows on Bag',
-  'Stand Over Bag',
-  'Sprawl Spin',
-  'Shin Ride Switch',
-  'Get Up and Strike',
-];
-
-export const ALL_MOVES: Record<MoveCategory, string[]> = {
-  striking: ['1', '2', '3', '4', '5', '6', '7', '8'],
-  defense: DEFENSIVE_MOVES,
-  clinch: CLINCH_MOVES,
-  takedown: TAKEDOWN_MOVES,
-  ground: GROUND_MOVES,
-};
-
-export const MOVE_CATEGORY_LABELS: Record<MoveCategory, string> = {
-  striking: 'Striking',
-  defense: 'Defense',
-  clinch: 'Bag Clinch',
-  takedown: 'Shot Entries',
-  ground: 'Duffel Ground Work',
-};
-
-export const MOVE_CATEGORY_COLORS: Record<MoveCategory, { active: string; idle: string; panel: string; text: string }> = {
+// UI Styling mapping for move categories
+export const MOVE_CATEGORY_COLORS: Record<string, { panel: string; text: string; active: string; idle: string }> = {
+  punch: {
+    panel: 'bg-red-500/20 border-red-500/30',
+    text: 'text-red-400',
+    active: 'bg-red-600 text-white',
+    idle: 'bg-red-950/40 text-red-300',
+  },
   striking: {
-    active: 'bg-green-600 text-white',
-    idle: 'bg-gray-700 text-gray-300 hover:bg-gray-600',
-    panel: 'bg-yellow-500/20 border border-yellow-500/50',
-    text: 'text-yellow-300',
+    panel: 'bg-red-500/20 border-red-500/30',
+    text: 'text-red-400',
+    active: 'bg-red-600 text-white',
+    idle: 'bg-red-950/40 text-red-300',
   },
   defense: {
+    panel: 'bg-blue-500/20 border-blue-500/30',
+    text: 'text-blue-400',
     active: 'bg-blue-600 text-white',
-    idle: 'bg-gray-700 text-gray-300 hover:bg-gray-600',
-    panel: 'bg-blue-500/20 border border-blue-500/50',
-    text: 'text-blue-300',
+    idle: 'bg-blue-950/40 text-blue-300',
   },
-  clinch: {
-    active: 'bg-cyan-700 text-white',
-    idle: 'bg-gray-700 text-gray-300 hover:bg-gray-600',
-    panel: 'bg-cyan-500/20 border border-cyan-500/50',
-    text: 'text-cyan-300',
-  },
-  takedown: {
-    active: 'bg-orange-600 text-white',
-    idle: 'bg-gray-700 text-gray-300 hover:bg-gray-600',
-    panel: 'bg-orange-500/20 border border-orange-500/50',
-    text: 'text-orange-300',
+  movement: {
+    panel: 'bg-green-500/20 border-green-500/30',
+    text: 'text-green-400',
+    active: 'bg-green-600 text-white',
+    idle: 'bg-green-950/40 text-green-300',
   },
   ground: {
+    panel: 'bg-amber-500/20 border-amber-500/30',
+    text: 'text-amber-400',
+    active: 'bg-amber-600 text-white',
+    idle: 'bg-amber-950/40 text-amber-300',
+  },
+  transition: {
+    panel: 'bg-purple-500/20 border-purple-500/30',
+    text: 'text-purple-400',
     active: 'bg-purple-600 text-white',
-    idle: 'bg-gray-700 text-gray-300 hover:bg-gray-600',
-    panel: 'bg-purple-500/20 border border-purple-500/50',
-    text: 'text-purple-300',
+    idle: 'bg-purple-950/40 text-purple-300',
+  },
+  clinch: {
+    panel: 'bg-cyan-500/20 border-cyan-500/30',
+    text: 'text-cyan-400',
+    active: 'bg-cyan-600 text-white',
+    idle: 'bg-cyan-950/40 text-cyan-300',
+  },
+  takedown: {
+    panel: 'bg-orange-500/20 border-orange-500/30',
+    text: 'text-orange-400',
+    active: 'bg-orange-600 text-white',
+    idle: 'bg-orange-950/40 text-orange-300',
   },
 };
 
-const DEFAULT_COMBOS: Record<IntensityPreset['comboComplexity'], string[]> = {
-  simple: ['1', '2', '1-2', '1-1-2', 'Slip Right', 'Sprawl', 'Technical Stand Up'],
-  moderate: ['1-2-3', '3-2', '1-3-2', '2-3-2', 'Slip Left-2', 'Shot to Bag', 'Hip Escape'],
-  complex: ['1-2-3-2', '1-2-5-2', 'Slip Right-2-3', 'Sprawl-2-3', 'Dirty Boxing', 'Posture and Punch'],
+export const MOVE_CATEGORY_LABELS: Record<string, string> = {
+  punch: 'Punches & Combos',
+  striking: 'Striking & Boxing',
+  defense: 'Defense & Slips',
+  movement: 'Footwork & Angles',
+  ground: 'Ground & Pound',
+  transition: 'Transitions & Control',
+  clinch: 'Bag Clinch & Knees',
+  takedown: 'Shot Entries & Sprawls',
 };
 
+// Base callout catalog
+export const ALL_MOVES: Record<string, string[]> = {
+  punch: ['1, 2', '1, 2, 3', '1, 2, 3, 2', '1, 1, 2', '1, 6, 3, 2', '1, 2, body'],
+  striking: ['1, 2', '1, 2, 3', '1, 2, 3, 2', '1, 1, 2', '1, 6, 3, 2', '1, 2, body'],
+  defense: ['1, 2, slip, 2', 'roll, 2, 3, 2', 'slip right, 2, 3', 'slip left, 5, 2'],
+  movement: ['1, 2, step back, 2', 'circle left, 1, 2', 'circle right, 1, 2'],
+  ground: ['Post and heavy hammerfists', 'Mount, straight punches', 'Mount, heavy elbows', 'Knee on belly, 1, 2'],
+  transition: ['Sprawl, heavy sprawl!', 'Stand up, reset stance', 'Frame and push, re-engage', 'Transition to mount'],
+  clinch: ['Collar tie, heavy knees', 'Plum clinch, double knee'],
+  takedown: ['Level change, double leg', 'Sprawl, spin to back'],
+};
+
+// Presets for UI Selectors
 export const ROUTINE_TEMPLATES: RoutineTemplate[] = [
   {
-    id: 'solo-mma-foundations',
-    name: 'Solo MMA Foundations',
-    focus: 'Heavy bag striking, defensive movement, shot entries, and duffel get-ups',
-    rounds: 5,
+    id: 'standing_bag_3r',
+    name: 'Standing Bag Essentials',
+    description: '3 Rounds of combinations, movement, and level changes.',
+    focus: 'Striking & Footwork',
+    rounds: 3,
     roundDuration: 180,
     restDuration: 60,
-    intensityId: 'counter',
+    intensityId: 'standard',
     roundConfigs: [
-      { roundNumber: 1, name: 'Bag Boxing Rhythm', combos: ['1', '1-2', '1-2-3', 'Slip Right-2', 'Pivot Left'] },
-      { roundNumber: 2, name: 'Defense to Counter', combos: ['Slip Left-2', 'Roll Right-3', 'High Guard', 'Circle Off Bag', '2-3-2'] },
-      { roundNumber: 3, name: 'Shot Awareness', combos: ['1-2-Sprawl', 'Level Change', 'Shot to Bag', 'Sprawl-2', 'Frame on Bag'] },
-      { roundNumber: 4, name: 'Duffel Ground Movement', combos: ['Hip Escape', 'Bridge and Shrimp', 'Technical Stand Up', 'Bag Side Control', 'Bag Mount'] },
-      { roundNumber: 5, name: 'Solo Fight Round', combos: ['1-2-3', 'Sprawl to Bag', 'Frame and Knee', 'Posture and Punch', 'Get Up and Strike'] },
+      { roundNumber: 1, name: 'Warmup & Range', combos: ['1, 2', '1, 1, 2', 'circle left, 1, 2'] },
+      { roundNumber: 2, name: 'Combos & Defense', combos: ['1, 2, 3, 2', '1, 2, slip, 2', 'roll, 2, 3'] },
+      { roundNumber: 3, name: 'Power & Output', combos: ['1, 2, body, head', '10 second speed burst', 'power hooks'] },
     ],
   },
   {
-    id: 'bag-pressure-mma',
-    name: 'Bag Pressure MMA',
-    focus: 'Fast heavy bag bursts, clinch pressure, sprawls, and top-control conditioning',
-    rounds: 5,
+    id: 'ground_bag_3r',
+    name: 'Ground Duffel Heavy Duty',
+    description: '3 Rounds of positional transitions, G&P, and sprawls.',
+    focus: 'Ground & Pound / Scrambles',
+    rounds: 3,
     roundDuration: 180,
-    restDuration: 45,
-    intensityId: 'pressure',
+    restDuration: 60,
+    intensityId: 'standard',
     roundConfigs: [
-      { roundNumber: 1, name: 'Pressure Boxing', combos: ['1-1-2', '1-2-3-2', '3-2-3', 'Check Hook-2', 'Pivot Right-2'] },
-      { roundNumber: 2, name: 'Pocket Defense', combos: ['Roll Left-3-2', 'Roll Right-2-3', 'High Guard-3-2', 'Body Block-2-3', 'Parry Jab-2'] },
-      { roundNumber: 3, name: 'Bag Clinch', combos: ['1-2-Bag Clinch', 'Short Knees', 'Dirty Boxing', 'Frame and Knee', 'Post and Exit-2'] },
-      { roundNumber: 4, name: 'Sprawl and Shot Entries', combos: ['Shot to Bag', 'Sprawl to Bag', 'Snap Down on Bag', 'Drive Through Bag', 'Sprawl-2-3'] },
-      { roundNumber: 5, name: 'Top Pressure', combos: ['Bag Mount', 'Knee on Bag', 'Posture and Punch', 'Elbows on Bag', 'Get Up and Strike'] },
-    ],
-  },
-  {
-    id: 'duffel-ground-conditioning',
-    name: 'Duffel Ground Conditioning',
-    focus: 'Limited solo ground work: movement, pressure, posture, and stand-ups',
-    rounds: 4,
-    roundDuration: 150,
-    restDuration: 45,
-    intensityId: 'counter',
-    roundConfigs: [
-      { roundNumber: 1, name: 'Base and Get-Ups', combos: ['Technical Stand Up', 'Hip Escape', 'Sit Out', 'Stand Over Bag'] },
-      { roundNumber: 2, name: 'Bottom Movement', combos: ['Hip Escape', 'Bridge and Shrimp', 'Sit Out', 'Get Up and Strike'] },
-      { roundNumber: 3, name: 'Top Pressure', combos: ['Bag Side Control', 'Bag Mount', 'Knee on Bag', 'Top Pressure Hold', 'Posture and Punch'] },
-      { roundNumber: 4, name: 'Scramble Round', combos: ['Sprawl Spin', 'Technical Stand Up', 'Shot to Bag', 'Sprawl-2', 'Get Up and Strike'] },
+      { roundNumber: 1, name: 'Control & Posture', combos: ['Post and heavy hammerfists', 'Mount, straight punches'] },
+      { roundNumber: 2, name: 'Transitions & Scrambles', combos: ['Knee on belly, 1, 2', 'Side control, knees to body', 'Sprawl, heavy sprawl!'] },
+      { roundNumber: 3, name: 'Finish & Reset', combos: ['Mount, heavy elbows', 'Stand up, reset stance', 'Stand up, 1, 2, shoot back down'] },
     ],
   },
 ];
 
-export function getMoveCategory(move: string): MoveCategory {
-  const parts = move.split('-').map(part => part.trim());
-  const lastKnownPart = [...parts].reverse().find(part =>
-    Object.values(ALL_MOVES).some(moves => moves.includes(part))
-  );
-  const valueToCheck = lastKnownPart || move;
-
-  for (const [category, moves] of Object.entries(ALL_MOVES) as [MoveCategory, string[]][]) {
-    if (moves.includes(valueToCheck)) {
-      return category;
-    }
-  }
-
-  return /^\d(?:-\d)*$/.test(move) ? 'striking' : 'ground';
+// Helper Functions
+export function formatMoveForDisplay(move: string): string {
+  return move;
 }
 
-export function isDefensiveMove(move: string): boolean {
-  return getMoveCategory(move) === 'defense';
+export function formatMoveForSpeech(move: string): string {
+  return move.replace(/-/g, ' ');
+}
+
+export function getMoveCategory(move: string): MoveCategory {
+  const lower = move.toLowerCase();
+  if (lower.includes('mount') || lower.includes('knee') || lower.includes('elbow') || lower.includes('hammerfist')) {
+    return 'ground';
+  }
+  if (lower.includes('sprawl') || lower.includes('stand up') || lower.includes('transition')) {
+    return 'transition';
+  }
+  if (lower.includes('slip') || lower.includes('roll')) {
+    return 'defense';
+  }
+  if (lower.includes('circle') || lower.includes('step back')) {
+    return 'movement';
+  }
+  return 'punch';
+}
+
+export function getMoveLabel(move: string): string {
+  return move;
 }
 
 export function getRandomDelay(min: number, max: number): number {
   return Math.random() * (max - min) + min;
 }
 
-export function formatMoveForDisplay(move: string): string {
-  return move
-    .split('-')
-    .map(part => part.trim())
-    .map(part => (PUNCH_NAMES[part] ? part : part))
-    .join(' - ');
-}
-
-export function formatMoveForSpeech(move: string): string {
-  return move
-    .split('-')
-    .map(part => part.trim())
-    .map(part => NUMBER_WORDS[part] || part)
-    .join(', ');
-}
-
-export function getMoveLabel(move: string): string {
-  return PUNCH_NAMES[move] ? `${move} (${PUNCH_NAMES[move]})` : move;
-}
-
-export function generateFightScenario(roundNumber: number, intensityId: string): string[] {
-  const intensity = INTENSITY_PRESETS[intensityId] || INTENSITY_PRESETS.counter;
-  const patternList = DEFAULT_COMBOS[intensity.comboComplexity] || DEFAULT_COMBOS.moderate;
-  const offset = (roundNumber - 1) % patternList.length;
-  const scenario = [
-    patternList[offset],
-    patternList[(offset + 1) % patternList.length],
-    patternList[(offset + 2) % patternList.length],
-  ];
-
-  if (roundNumber % 2 === 0) {
-    scenario.push('Sprawl', 'Technical Stand Up');
-  } else {
-    scenario.push('Slip Right', 'Hip Escape');
+export function generateFightScenario(
+  roundOrType?: number | WorkoutType | string,
+  intensity?: IntensityLevel | string
+): string[] {
+  if (typeof roundOrType === 'string' && roundOrType === 'ground_bag') {
+    return [...ALL_MOVES.ground, ...ALL_MOVES.transition];
   }
-
-  return Array.from(new Set(scenario));
+  return [...ALL_MOVES.punch, ...ALL_MOVES.defense, ...ALL_MOVES.movement];
 }
