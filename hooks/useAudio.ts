@@ -4,8 +4,6 @@ import { useCallback, useRef, useEffect } from 'react';
 
 export const useAudio = () => {
   const audioCtxRef = useRef<AudioContext | null>(null);
-  const activeUtteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
-
   // Initialize or resume AudioContext on user interaction
   const initAudio = useCallback(() => {
     if (typeof window === 'undefined') return;
@@ -136,19 +134,23 @@ export const useAudio = () => {
     }
   }, [initAudio]);
 
-// Text-To-Speech Callout
-  const speak = useCallback((text: string) => {
+  // Text-To-Speech Callout
+  const speakText = useCallback((text: string, priority?: string) => {
     if (typeof window === 'undefined' || !('speechSynthesis' in window)) return;
 
     const synth = window.speechSynthesis;
-    synth.cancel();
-    synth.resume(); // Ensure speech is not paused
+    if (synth.paused) {
+      synth.resume();
+    }
+
+    if (priority === 'high') {
+      synth.cancel();
+    }
 
     const utterance = new SpeechSynthesisUtterance(text);
-    utterance.rate = 1.1; // Default rate for clear speech
-    utterance.volume = 1.0; // Full volume
+    utterance.rate = 1.15;
+    utterance.volume = 1.0;
 
-    // Select an English voice if available, otherwise use the first available voice
     const voices = synth.getVoices();
     if (voices.length > 0) {
       utterance.voice = voices.find(v => v.lang.startsWith('en')) || voices[0];
@@ -210,7 +212,7 @@ export const useAudio = () => {
     playLongBeep,
     playHalfway,
     playTenSeconds,
-    speak,
+    speakText,
     isSpeaking,
     preloadVoices, // Export preloadVoices
   };
