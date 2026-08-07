@@ -4,7 +4,7 @@ import { useCallback, useRef, useEffect } from 'react';
 
 let globalAudioCtx: AudioContext | null = null;
 
-// Synchronous unlock for the Web Audio Context on direct touch/click
+// Synchronous unlock for Web Audio Context
 export const initAudio = (): AudioContext | null => {
   if (typeof window === 'undefined') return null;
 
@@ -20,7 +20,7 @@ export const initAudio = (): AudioContext | null => {
       void globalAudioCtx.resume();
     }
 
-    // Play a silent buffer to force-unlock iOS WebKit audio bus
+    // Force-unlock iOS audio bus with silent buffer
     try {
       const buffer = globalAudioCtx.createBuffer(1, 1, 22050);
       const source = globalAudioCtx.createBufferSource();
@@ -28,7 +28,7 @@ export const initAudio = (): AudioContext | null => {
       source.connect(globalAudioCtx.destination);
       source.start(0);
     } catch {
-      // Ignore initial unlock warnings
+      // Ignore initial unlock errors
     }
   }
 
@@ -50,6 +50,17 @@ export const useAudio = () => {
     const ctx = initAudio();
     audioCtxRef.current = ctx;
     return ctx;
+  }, []);
+
+  // Synchronously ensure context is running before executing nodes
+  const ensureContextRunning = useCallback((ctx: AudioContext, callback: () => void) => {
+    if (ctx.state === 'suspended') {
+      ctx.resume().then(() => {
+        callback();
+      }).catch(() => {});
+    } else {
+      callback();
+    }
   }, []);
 
   const ensureContextReady = useCallback(async (): Promise<AudioContext | null> => {
@@ -79,35 +90,33 @@ export const useAudio = () => {
     }
   }, []);
 
-  // Universal Synchronous Beep Synthesizer
+  // Fixed Synthesizer using safely resolved execution frame
   const playBeep = useCallback((freq = 800, duration = 0.15, type: OscillatorType = 'sine') => {
     try {
       const ctx = handleInitAudio();
       if (!ctx) return;
 
-      if (ctx.state === 'suspended') {
-        void ctx.resume();
-      }
+      ensureContextRunning(ctx, () => {
+        const now = ctx.currentTime;
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
 
-      const now = ctx.currentTime;
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
+        osc.type = type;
+        osc.frequency.setValueAtTime(freq, now);
 
-      osc.type = type;
-      osc.frequency.setValueAtTime(freq, now);
+        gain.gain.setValueAtTime(0.3, now);
+        gain.gain.exponentialRampToValueAtTime(0.0001, now + duration);
 
-      gain.gain.setValueAtTime(0.3, now);
-      gain.gain.exponentialRampToValueAtTime(0.0001, now + duration);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
 
-      osc.connect(gain);
-      gain.connect(ctx.destination);
-
-      osc.start(now);
-      osc.stop(now + duration);
+        osc.start(now);
+        osc.stop(now + duration);
+      });
     } catch (e) {
       console.warn('Audio playBeep failed:', e);
     }
-  }, [handleInitAudio]);
+  }, [handleInitAudio, ensureContextRunning]);
 
   const playLongBeep = useCallback((freq = 1000, duration = 0.6, type: OscillatorType = 'sine') => {
     playBeep(freq, duration, type);
@@ -124,42 +133,40 @@ export const useAudio = () => {
     playBeep(900, 0.2, 'square');
   }, [playBeep]);
 
-  // Synchronous Layered Boxing Ring Bell
+  // Fixed Layered Boxing Ring Bell
   const playBell = useCallback(() => {
     try {
       const ctx = handleInitAudio();
       if (!ctx) return;
 
-      if (ctx.state === 'suspended') {
-        void ctx.resume();
-      }
+      ensureContextRunning(ctx, () => {
+        const freqs = [800, 1230, 1640];
+        const now = ctx.currentTime;
 
-      const freqs = [800, 1230, 1640];
-      const now = ctx.currentTime;
+        freqs.forEach((freq, idx) => {
+          const osc = ctx.createOscillator();
+          const gain = ctx.createGain();
 
-      freqs.forEach((freq, idx) => {
-        const osc = ctx.createOscillator();
-        const gain = ctx.createGain();
+          osc.type = 'sine';
+          osc.frequency.setValueAtTime(freq, now);
 
-        osc.type = 'sine';
-        osc.frequency.setValueAtTime(freq, now);
+          const initialVolume = idx === 0 ? 0.35 : 0.15;
+          gain.gain.setValueAtTime(initialVolume, now);
+          gain.gain.exponentialRampToValueAtTime(0.0001, now + 1.5);
 
-        const initialVolume = idx === 0 ? 0.35 : 0.15;
-        gain.gain.setValueAtTime(initialVolume, now);
-        gain.gain.exponentialRampToValueAtTime(0.0001, now + 1.5);
+          osc.connect(gain);
+          gain.connect(ctx.destination);
 
-        osc.connect(gain);
-        gain.connect(ctx.destination);
-
-        osc.start(now);
-        osc.stop(now + 1.5);
+          osc.start(now);
+          osc.stop(now + 1.5);
+        });
       });
     } catch (e) {
       console.warn('Audio playBell failed:', e);
     }
-  }, [handleInitAudio]);
+  }, [handleInitAudio, ensureContextRunning]);
 
-  // Text-To-Speech Execution
+  // Text-To-Speech Execution with Safe Audio Bus Handover
   const speakText = useCallback((text: string, priority?: string, onEnd?: () => void) => {
     if (typeof window === 'undefined' || !('speechSynthesis' in window)) {
       if (onEnd) onEnd();
@@ -208,20 +215,7 @@ export const useAudio = () => {
     utterance.onend = handleSpeechEnd;
     utterance.onerror = handleSpeechEnd;
 
-    if (synth.paused) {
-      synth.resume();
-    }
-
     synth.speak(utterance);
-
-    // Keep-alive check for long voice queues without toggling pause/resume
-    speechIntervalRef.current = setInterval(() => {
-      if (!synth.speaking) {
-        handleSpeechEnd();
-      } else if (synth.paused) {
-        synth.resume();
-      }
-    }, 3000);
   }, []);
 
   const isSpeaking = useCallback(() => {
