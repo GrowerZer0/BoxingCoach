@@ -56,22 +56,6 @@ export default function Timer(props: TimerProps) {
     onRelease: () => console.log('Wake lock released'),
   });
 
-  useEffect(() => {
-    const preload = () => {
-      // Safely call preloadVoices using optional chaining
-      audio.preloadVoices?.();
-      document.removeEventListener('click', preload);
-      document.removeEventListener('touchstart', preload);
-    };
-    
-    document.addEventListener('click', preload);
-    document.addEventListener('touchstart', preload);
-    
-    return () => {
-      document.removeEventListener('click', preload);
-      document.removeEventListener('touchstart', preload);
-    };
-  }, [audio]); // Dependency array should include audio
 
   useEffect(() => {
     if (isRunning) {
