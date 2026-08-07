@@ -1,90 +1,67 @@
-// hooks/useWakeLock.ts
-import { useEffect, useState, useCallback } from 'react';
+'use client';
 
-interface WakeLockOptions {
+import { useState, useCallback, useEffect } from 'react';
+
+interface UseWakeLockOptions {
   onError?: (error: Error) => void;
-  onRelease?: () => void;
   onActive?: () => void;
+  onRelease?: () => void;
 }
 
-export function useWakeLock(options: WakeLockOptions = {}) {
+export const useWakeLock = (options: UseWakeLockOptions = {}) => {
   const [wakeLock, setWakeLock] = useState<WakeLockSentinel | null>(null);
   const [isActive, setIsActive] = useState(false);
-  const [isSupported, setIsSupported] = useState(true);
 
   const requestWakeLock = useCallback(async () => {
+    if (typeof window === 'undefined' || !('wakeLock' in navigator)) return;
+    if (document.visibilityState !== 'visible') return;
+
     try {
-      if (!('wakeLock' in navigator)) {
-        setIsSupported(false);
-        console.warn('Wake Lock API not supported');
-        return null;
-      }
-
-      // Check if already active
-      if (wakeLock) {
-        return wakeLock;
-      }
-
       const lock = await navigator.wakeLock.request('screen');
       setWakeLock(lock);
       setIsActive(true);
       options.onActive?.();
 
-      // Listen for release
       lock.addEventListener('release', () => {
         setIsActive(false);
         setWakeLock(null);
         options.onRelease?.();
       });
-
-      return lock;
-    } catch (err) {
-      const error = err instanceof Error ? err : new Error('Wake Lock request failed');
-      options.onError?.(error);
-      console.error('Wake Lock error:', error);
-      return null;
+    } catch (err: any) {
+      setIsActive(false); // Ensure isActive is false on any error
+      // Silently ignore NotAllowedError as it's a common case where permission is denied by the browser
+      // or user preferences, and not necessarily an app error.
+      if (err.name !== 'NotAllowedError') {
+        options.onError?.(err);
+      }
     }
-  }, [wakeLock, options]);
+  }, [options]);
 
   const releaseWakeLock = useCallback(async () => {
-    try {
-      if (wakeLock) {
+    if (wakeLock) {
+      try {
         await wakeLock.release();
+      } catch (err: any) {
+        options.onError?.(err);
+      } finally {
         setWakeLock(null);
         setIsActive(false);
       }
-    } catch (err) {
-      console.error('Error releasing wake lock:', err);
     }
-  }, [wakeLock]);
+  }, [wakeLock, options]);
 
-  // Auto-request wake lock when page becomes visible
   useEffect(() => {
     const handleVisibilityChange = () => {
-      if (document.visibilityState === 'visible' && isActive) {
-        // Re-request if we lost it due to page hide
+      if (document.visibilityState === 'visible' && isActive && !wakeLock) {
         requestWakeLock();
       }
     };
 
     document.addEventListener('visibilitychange', handleVisibilityChange);
-
     return () => {
       document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
-  }, [isActive, requestWakeLock]);
+  }, [isActive, wakeLock, requestWakeLock]);
 
-  // Auto-release on unmount
-  useEffect(() => {
-    return () => {
-      releaseWakeLock();
-    };
-  }, [releaseWakeLock]);
-
-  return {
-    requestWakeLock,
-    releaseWakeLock,
-    isActive,
-    isSupported,
-  };
-}
+  return { requestWakeLock, releaseWakeLock, isActive };
+};

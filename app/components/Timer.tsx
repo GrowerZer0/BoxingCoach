@@ -32,7 +32,7 @@ export default function Timer(props: TimerProps) {
   const restDuration = settings?.restDuration || props.restLength || 60;
   const totalRounds = settings?.rounds || 3;
   const intensityId = settings?.intensityId || 'counter';
-const { initAudio, playBeep, speak } = useAudio();
+
   const {
     config,
     timeRemaining,
@@ -142,10 +142,11 @@ const { initAudio, playBeep, speak } = useAudio();
     try {
       // Just call ensureContextReady which handles everything
       await audio.ensureContextReady();
-      console.log('✅ Audio state after force init:', audio.isContextReady);
+      const ready = audio.isContextReady();
+      console.log('✅ Audio state after force init:', ready);
       
       // Show status to user
-      const status = audio.isContextReady ? '✅ YES' : '❌ NO';
+      const status = ready ? '✅ YES' : '❌ NO';
       alert(`Audio initialized: ${status}\n\nTry clicking "Test Beep" now.`);
     } catch (error) {
       console.error('❌ Force init failed:', error);
@@ -182,9 +183,15 @@ const { initAudio, playBeep, speak } = useAudio();
   };
 
   const handleStart = async () => {
-    audio.hapticFeedback(15);
+    // Ensure speech synthesis and audio context are active on user interaction
+    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+      window.speechSynthesis.cancel();
+      window.speechSynthesis.resume();
+    }
     audio.initAudio();
-    
+    audio.hapticFeedback(15);
+    requestWakeLock(); // Request wake lock directly on user interaction
+
     if (props.onWorkoutStart) {
       try {
         await props.onWorkoutStart();
@@ -346,7 +353,7 @@ const { initAudio, playBeep, speak } = useAudio();
           {!isActive && isRunning && (
             <span className="text-yellow-500">💤 Screen may sleep</span>
           )}
-          {audio.isSpeaking && (
+          {audio.isSpeaking() && (
             <span className="text-blue-500">🔊 Speaking...</span>
           )}
           {props.currentWorkoutId && (
@@ -367,8 +374,8 @@ const { initAudio, playBeep, speak } = useAudio();
             <div className="mt-2 p-4 bg-gray-800 rounded-lg border border-gray-700">
               <div className="text-xs text-gray-400 mb-2">🔊 Audio Test Panel</div>
               <div className="text-xs text-gray-500 mb-2">
-                Context Ready: {audio.isContextReady ? '✅ YES' : '❌ NO'}
-                {!audio.isContextReady && ' (Click "Force Init" first)'}
+                Context Ready: {audio.isContextReady() ? '✅ YES' : '❌ NO'}
+                {!audio.isContextReady() && ' (Click "Force Init" first)'}
               </div>
               <div className="flex gap-2 justify-center flex-wrap">
                 {/* Force Init button */}
