@@ -189,6 +189,13 @@ const handleStart = () => {
   }
 
   // C. Engage Wake Lock & Start Timer
+  audio.ensureContextReady().then(ready => {
+    if (ready) {
+      console.log('✅ AudioContext is running.');
+    } else {
+      console.warn('⚠️ AudioContext is NOT running.');
+    }
+  });
   requestWakeLock();
   startTimer();
 

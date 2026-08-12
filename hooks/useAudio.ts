@@ -183,58 +183,92 @@ export function useAudio() { // Changed to named function export
   }, [handleInitAudio, ensureContextRunning]);
 
   // Text-To-Speech using pre-generated audio files
-  const speakText = useCallback(async (text: string, _priority?: string, onEnd?: () => void) => {
-    if (typeof window === 'undefined') {
-      onEnd?.();
-      return;
-    }
+const speakText = useCallback(async (text: string, _priority?: string, onEnd?: () => void) => {
+  if (typeof window === 'undefined') {
+    onEnd?.();
+    return;
+  }
 
-    const ctx = handleInitAudio();
-    if (!ctx) {
-      onEnd?.();
-      return;
-    }
+  // 1. Ensure the context exists and is forced to be ready
+  const ctx = handleInitAudio();
+  if (!ctx) {
+    onEnd?.();
+    return;
+  }
 
-    const slug = slugify(text);
-    const audioPath = `/audio/${slug}.mp3`;
-    const cache = audioBufferCacheRef.current;
-
-    const playBuffer = (buffer: AudioBuffer) => {
-      ensureContextRunning(ctx, () => {
-        const source = ctx.createBufferSource();
-        source.buffer = buffer;
-        source.connect(ctx.destination);
-        
-        activeAudioSources.add(source); // Track active source
-
-        source.onended = () => {
-          activeAudioSources.delete(source); // Remove when ended
-          source.disconnect(); // Clean up
-          onEnd?.();
-        };
-        source.start(0);
-      });
-    };
-
-    if (cache.has(slug)) {
-      playBuffer(cache.get(slug)!);
-      return;
-    }
-
+  // 2. CRITICAL FIX: Force the context to be running synchronously if possible.
+  // If it's suspended, resume it and wait for the promise to resolve.
+  if (ctx.state === 'suspended') {
     try {
-      const response = await fetch(audioPath);
-      if (!response.ok) {
-        throw new Error(`Failed to fetch audio file: ${audioPath}, status: ${response.status}`);
-      }
-      const arrayBuffer = await response.arrayBuffer();
-      const audioBuffer = await ctx.decodeAudioData(arrayBuffer);
-      cache.set(slug, audioBuffer);
-      playBuffer(audioBuffer);
+      await ctx.resume(); // Wait for the resume to complete
     } catch (e) {
-      console.warn(`Failed to load or play audio for "${text}":`, e);
-      onEnd?.(); // Ensure the callout queue doesn't hang
+      console.warn('Failed to resume AudioContext before speakText:', e);
+      onEnd?.();
+      return;
     }
-  }, [handleInitAudio, ensureContextRunning]);
+  }
+
+  // If ctx.state is still not running after resume, we'll try to force it with a silent buffer.
+  // This is the iOS unlock technique, similar to what we do in initAudio.
+  if (ctx.state !== 'running') {
+    try {
+      const buffer = ctx.createBuffer(1, 1, 22050);
+      const unlockSource = ctx.createBufferSource();
+      unlockSource.buffer = buffer;
+      unlockSource.connect(ctx.destination);
+      unlockSource.start(0);
+      // We don't need to wait for the unlock to finish, just start it.
+    } catch {
+      // Ignore unlock errors
+    }
+  }
+
+  // 3. If after all that, the context is still not running, give up.
+  if (ctx.state !== 'running') {
+    console.warn('AudioContext not running, skipping speakText:', text);
+    onEnd?.();
+    return;
+  }
+
+  const slug = slugify(text);
+  const audioPath = `/audio/${slug}.mp3`;
+  const cache = audioBufferCacheRef.current;
+
+  const playBuffer = (buffer: AudioBuffer) => {
+    // At this point, ctx.state should be 'running' because we forced it above.
+    const source = ctx.createBufferSource();
+    source.buffer = buffer;
+    source.connect(ctx.destination);
+
+    activeAudioSources.add(source);
+
+    source.onended = () => {
+      activeAudioSources.delete(source);
+      source.disconnect();
+      onEnd?.();
+    };
+    source.start(0);
+  };
+
+  if (cache.has(slug)) {
+    playBuffer(cache.get(slug)!);
+    return;
+  }
+
+  try {
+    const response = await fetch(audioPath);
+    if (!response.ok) {
+      throw new Error(`Failed to fetch audio file: ${audioPath}, status: ${response.status}`);
+    }
+    const arrayBuffer = await response.arrayBuffer();
+    const audioBuffer = await ctx.decodeAudioData(arrayBuffer);
+    cache.set(slug, audioBuffer);
+    playBuffer(audioBuffer);
+  } catch (e) {
+    console.warn(`Failed to load or play audio for "${text}":`, e);
+    onEnd?.(); // Ensure the callout queue doesn't hang
+  }
+}, [handleInitAudio]);
 
   const isSpeaking = useCallback(() => {
     // Check if there are any active audio sources from speakText
