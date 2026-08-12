@@ -1,4 +1,4 @@
-// hooks/useTimer.ts - Complete fixed version with Mobile Audio Unlock & External Audio Context Sharing
+// hooks/useTimer.ts - Complete fixed version with proper TypeScript
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { useAudio } from './useAudio';
 import { useSettings } from '@/contexts/SettingsContext';
@@ -68,6 +68,11 @@ export function useTimer(options: UseTimerOptions = {}) {
   const timeRemainingRef = useRef<number>(config.roundDuration);
   const isSpeakingRef = useRef(false);
 
+  // Refs for functions that need to be called from other functions
+  const startCountdownRef = useRef<((isFirstRound: boolean) => void) | null>(null);
+  const beginRoundRef = useRef<(() => void) | null>(null);
+  const handleRoundEndRef = useRef<(() => void) | null>(null);
+
   useEffect(() => {
     currentPhaseRef.current = config.phase;
     currentRoundRef.current = config.currentRound;
@@ -77,15 +82,33 @@ export function useTimer(options: UseTimerOptions = {}) {
     timeRemainingRef.current = timeRemaining;
   }, [timeRemaining]);
 
+  // --- Helper: Safe Speak ---
+  const safeSpeak = useCallback((text: string, onEnd?: () => void) => {
+    if (!settings?.enableVoice) {
+      onEnd?.();
+      return;
+    }
+    
+    // Use the unified speak method
+    if (audio.speak) {
+      audio.speak(text, onEnd);
+    } else if (audio.speakText) {
+      // Fallback for compatibility - speakText now expects (text, onEnd)
+      audio.speakText(text, onEnd);
+    } else {
+      console.warn('No speak method available');
+      onEnd?.();
+    }
+  }, [audio, settings?.enableVoice]);
+
+  // --- Countdown Beep ---
   const playCountdownBeep = useCallback((second: number, isFirstRound: boolean) => {
     console.log(`[Timer] Countdown: ${second} (first round: ${isFirstRound})`);
 
     if (second === 10 && isFirstRound) {
       audio.playBeep?.();
       audio.hapticFeedback?.(15);
-      if (audio.speakText) {
-        audio.speakText('Get ready');
-      }
+      safeSpeak('Get ready');
     } else if (second === 3 || second === 2 || second === 1) {
       audio.playBeep?.();
       audio.hapticFeedback?.(10);
@@ -94,8 +117,9 @@ export function useTimer(options: UseTimerOptions = {}) {
       audio.hapticFeedback?.([50, 100, 50]);
       audio.playBell?.();
     }
-  }, [audio]);
+  }, [audio, safeSpeak]);
 
+  // --- Get Available Moves ---
   const getAvailableMoves = useCallback(() => {
     const roundNum = currentRoundRef.current;
     const currentRoundConfig = settings?.roundConfigs?.find(
@@ -111,6 +135,7 @@ export function useTimer(options: UseTimerOptions = {}) {
     return availableMoves;
   }, [settings?.roundConfigs, config.intensityId]);
 
+  // --- Schedule Next Callout ---
   const scheduleNextCallout = useCallback(() => {
     if (calloutTimerRef.current) {
       clearTimeout(calloutTimerRef.current);
@@ -170,22 +195,17 @@ export function useTimer(options: UseTimerOptions = {}) {
         }, postSpeechRest);
       };
 
-isSpeakingRef.current = true;
+      isSpeakingRef.current = true;
 
-if (audio.speakText && settings.enableVoice) {
-  audio.speakText(speechText, 'high', onSpeechEnd);
-} else {
-  isSpeakingRef.current = false;
-  if (calloutTimerRef.current) clearTimeout(calloutTimerRef.current);
-  calloutTimerRef.current = setTimeout(() => {
-    scheduleNextCallout();
-  }, postSpeechRest);
-}
+      // Use safeSpeak with the speech text
+      safeSpeak(speechText, onSpeechEnd);
+      
       audio.hapticFeedback?.([15, 30, 15]);
       
     }, delayBeforeSpeech);
-  }, [isPaused, config.intensityId, audio, getAvailableMoves, settings.enableVoice]);
+  }, [isPaused, config.intensityId, audio, getAvailableMoves, safeSpeak]);
 
+  // --- Schedule Round Events ---
   const scheduleRoundEvents = useCallback((duration: number) => {
     const events: { time: number; action: () => void; triggered: boolean }[] = [];
 
@@ -194,9 +214,7 @@ if (audio.speakText && settings.enableVoice) {
       time: halfwayTime,
       action: () => {
         audio.hapticFeedback?.([30, 50, 30]);
-        if (audio.speakText) {
-          audio.speakText('Halfway there');
-        }
+        safeSpeak('Halfway there');
       },
       triggered: false
     });
@@ -206,9 +224,7 @@ if (audio.speakText && settings.enableVoice) {
         time: 10,
         action: () => {
           audio.hapticFeedback?.([20, 50, 20]);
-          if (audio.speakText) {
-            audio.speakText('10 seconds left');
-          }
+          safeSpeak('10 seconds left');
         },
         triggered: false
       });
@@ -236,8 +252,9 @@ if (audio.speakText && settings.enableVoice) {
     });
 
     return events;
-  }, [audio]);
+  }, [audio, safeSpeak]);
 
+  // --- Handle Round End ---
   const handleRoundEnd = useCallback(() => {
     audio.playBell?.();
 
@@ -256,9 +273,7 @@ if (audio.speakText && settings.enableVoice) {
       if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
         window.speechSynthesis.cancel();
       }
-      if (audio.speakText) {
-        audio.speakText('Workout complete! Great job!');
-      }
+      safeSpeak('Workout complete! Great job!');
       return;
     }
 
@@ -298,11 +313,14 @@ if (audio.speakText && settings.enableVoice) {
           clearInterval(timerRef.current);
           timerRef.current = null;
         }
-        startCountdown(false);
+        if (startCountdownRef.current) {
+          startCountdownRef.current(false);
+        }
       }
     }, 1000);
-  }, [config.rounds, config.restDuration, audio, scheduleRoundEvents]);
+  }, [config.rounds, config.restDuration, audio, scheduleRoundEvents, safeSpeak]);
 
+  // --- Begin Round ---
   const beginRound = useCallback(() => {
     const roundNum = currentRoundRef.current;
     currentPhaseRef.current = 'round';
@@ -364,11 +382,14 @@ if (audio.speakText && settings.enableVoice) {
           calloutScheduledRef.current = false;
         }
         isRoundActiveRef.current = false;
-        handleRoundEnd();
+        if (handleRoundEndRef.current) {
+          handleRoundEndRef.current();
+        }
       }
     }, 1000);
-  }, [config.roundDuration, scheduleRoundEvents, scheduleNextCallout, handleRoundEnd]);
+  }, [config.roundDuration, scheduleRoundEvents, scheduleNextCallout]);
 
+  // --- Start Countdown ---
   const startCountdown = useCallback((isFirstRound: boolean = true) => {
     currentPhaseRef.current = 'countdown';
     setConfig(prev => ({
@@ -396,11 +417,21 @@ if (audio.speakText && settings.enableVoice) {
           clearInterval(countdownRef.current);
           countdownRef.current = null;
         }
-        beginRound();
+        if (beginRoundRef.current) {
+          beginRoundRef.current();
+        }
       }
     }, 1000);
-  }, [beginRound, playCountdownBeep]);
+  }, [playCountdownBeep]);
 
+  // --- Set up refs after all functions are defined ---
+  useEffect(() => {
+    startCountdownRef.current = startCountdown;
+    beginRoundRef.current = beginRound;
+    handleRoundEndRef.current = handleRoundEnd;
+  }, [startCountdown, beginRound, handleRoundEnd]);
+
+  // --- Start Timer ---
   const startTimer = useCallback(async () => {
     if (isRunning) return;
 
@@ -420,6 +451,7 @@ if (audio.speakText && settings.enableVoice) {
     startCountdown(true);
   }, [isRunning, startCountdown, audio]);
 
+  // --- Pause Timer ---
   const pauseTimer = useCallback(() => {
     if (!isRunning || isPaused) return;
     setIsPaused(true);
@@ -442,6 +474,7 @@ if (audio.speakText && settings.enableVoice) {
     }
   }, [isRunning, isPaused]);
 
+  // --- Resume Timer ---
   const resumeTimer = useCallback(async () => {
     if (!isPaused) return;
 
@@ -472,7 +505,9 @@ if (audio.speakText && settings.enableVoice) {
             clearInterval(countdownRef.current);
             countdownRef.current = null;
           }
-          beginRound();
+          if (beginRoundRef.current) {
+            beginRoundRef.current();
+          }
         }
       }, 1000);
       return;
@@ -515,7 +550,9 @@ if (audio.speakText && settings.enableVoice) {
           }
           isRoundActiveRef.current = false;
           isSpeakingRef.current = false;
-          handleRoundEnd();
+          if (handleRoundEndRef.current) {
+            handleRoundEndRef.current();
+          }
         }
       }, 1000);
 
@@ -553,7 +590,9 @@ if (audio.speakText && settings.enableVoice) {
             clearInterval(timerRef.current);
             timerRef.current = null;
           }
-          startCountdown(false);
+          if (startCountdownRef.current) {
+            startCountdownRef.current(false);
+          }
         }
       }, 1000);
       return;
@@ -568,13 +607,11 @@ if (audio.speakText && settings.enableVoice) {
     timeRemaining,
     scheduleNextCallout,
     scheduleRoundEvents,
-    handleRoundEnd,
-    beginRound,
-    startCountdown,
     playCountdownBeep,
     audio
   ]);
 
+  // --- Reset Timer ---
   const resetTimer = useCallback(() => {
     if (timerRef.current) {
       clearInterval(timerRef.current);
@@ -613,6 +650,7 @@ if (audio.speakText && settings.enableVoice) {
     }
   }, [config.roundDuration]);
 
+  // --- Cleanup ---
   useEffect(() => {
     return () => {
       if (timerRef.current) {

@@ -1,11 +1,11 @@
-// app/components/Timer.tsx - Fixed force init button
+// app/components/Timer.tsx - Updated with audio mode toggle
 'use client';
 
 import React, { useEffect, useState } from 'react';
 import { useTimer } from '@/hooks/useTimer';
 import { useWakeLock } from '@/hooks/useWakeLock';
 import { useSettings } from '@/contexts/SettingsContext';
-import { useAudio } from '@/hooks/useAudio';
+import { useAudio, AudioMode } from '@/hooks/useAudio';
 import { MOVE_CATEGORY_COLORS, MOVE_CATEGORY_LABELS } from '@/types/workout';
 
 interface TimerProps {
@@ -27,7 +27,8 @@ export default function Timer(props: TimerProps) {
   const { settings } = useSettings();
   const audio = useAudio();
   const [showDebug, setShowDebug] = useState(false);
-  
+  const [audioStatus, setAudioStatus] = useState('Checking...');
+
   const roundDuration = settings?.roundDuration || props.roundLength || 180;
   const restDuration = settings?.restDuration || props.restLength || 60;
   const totalRounds = settings?.rounds || 3;
@@ -57,7 +58,7 @@ export default function Timer(props: TimerProps) {
     onRelease: () => console.log('Wake lock released'),
   });
 
-
+  // --- Wake Lock Management ---
   useEffect(() => {
     if (isRunning) {
       requestWakeLock();
@@ -66,13 +67,27 @@ export default function Timer(props: TimerProps) {
     }
   }, [isRunning, requestWakeLock, releaseWakeLock]);
 
-  // --- Test Audio Functions ---
+  // --- Audio Status Monitoring ---
+  useEffect(() => {
+    const checkAudio = async () => {
+      const ctx = await audio.ensureContextReady();
+      if (ctx) {
+        setAudioStatus(`✅ ${ctx.state}`);
+      } else {
+        setAudioStatus('❌ Not Ready');
+      }
+    };
+    checkAudio();
+    const interval = setInterval(checkAudio, 5000);
+    return () => clearInterval(interval);
+  }, [audio]);
+
+  // --- Test Functions ---
   const testBeep = async () => {
     console.log('🔊 Testing beep...');
     try {
-      await audio.ensureContextReady();
-      await audio.playBeep();
-      console.log('✅ Beep test complete');
+      const result = await audio.playBeep();
+      console.log(result ? '✅ Beep test complete' : '❌ Beep test failed');
     } catch (error) {
       console.error('❌ Beep test failed:', error);
     }
@@ -81,29 +96,26 @@ export default function Timer(props: TimerProps) {
   const testBell = async () => {
     console.log('🔊 Testing bell...');
     try {
-      await audio.ensureContextReady();
-      await audio.playBell();
-      console.log('✅ Bell test complete');
+      const result = await audio.playBell();
+      console.log(result ? '✅ Bell test complete' : '❌ Bell test failed');
     } catch (error) {
       console.error('❌ Bell test failed:', error);
     }
   };
 
-  const testLongBeep = async () => {
-    console.log('🔊 Testing long beep...');
+  const testCallout = async () => {
+    console.log('🔊 Testing callout...');
     try {
-      await audio.ensureContextReady();
-      await audio.playLongBeep();
-      console.log('✅ Long beep test complete');
+      await audio.speak('jab');
+      console.log('✅ Callout test complete');
     } catch (error) {
-      console.error('❌ Long beep test failed:', error);
+      console.error('❌ Callout test failed:', error);
     }
   };
 
   const testHalfway = async () => {
     console.log('🔊 Testing halfway...');
     try {
-      await audio.ensureContextReady();
       await audio.playHalfway();
       console.log('✅ Halfway test complete');
     } catch (error) {
@@ -114,7 +126,6 @@ export default function Timer(props: TimerProps) {
   const testTenSeconds = async () => {
     console.log('🔊 Testing 10 seconds...');
     try {
-      await audio.ensureContextReady();
       await audio.playTenSeconds();
       console.log('✅ 10 seconds test complete');
     } catch (error) {
@@ -122,24 +133,39 @@ export default function Timer(props: TimerProps) {
     }
   };
 
-  // Fixed: Force initialize audio without accessing ref directly
-  const forceInit = async () => {
-    console.log('🔊 Force initializing audio...');
+  const testSpeech = async () => {
+    console.log('🔊 Testing speech synthesis...');
     try {
-      // Just call ensureContextReady which handles everything
-      await audio.ensureContextReady();
-      const ready = audio.isContextReady();
-      console.log('✅ Audio state after force init:', ready);
-      
-      // Show status to user
-      const status = ready ? '✅ YES' : '❌ NO';
-      alert(`Audio initialized: ${status}\n\nTry clicking "Test Beep" now.`);
+      audio.speakWithSpeechSynthesis('This is a test of speech synthesis');
+      console.log('✅ Speech test complete');
     } catch (error) {
-      console.error('❌ Force init failed:', error);
-      alert('Audio initialization failed. Please try clicking on the screen first.');
+      console.error('❌ Speech test failed:', error);
     }
   };
 
+  // --- Force Init ---
+  const forceInit = async () => {
+    console.log('🔊 Force initializing audio...');
+    try {
+      const ctx = await audio.ensureContextReady();
+      const ready = audio.isContextReady();
+      console.log('✅ Audio state after force init:', ready);
+      setAudioStatus(ready ? '✅ Running' : '❌ Not Ready');
+    } catch (error) {
+      console.error('❌ Force init failed:', error);
+    }
+  };
+
+  // --- Audio Mode Switching ---
+  const cycleAudioMode = () => {
+    const modes: AudioMode[] = ['mp3', 'speech', 'hybrid'];
+    const currentIndex = modes.indexOf(audio.audioMode);
+    const nextIndex = (currentIndex + 1) % modes.length;
+    audio.setMode(modes[nextIndex]);
+    console.log(`🎵 Audio mode switched to: ${modes[nextIndex]}`);
+  };
+
+  // --- Formatting ---
   const formatTime = (seconds: number): string => {
     const mins = Math.floor(seconds / 60);
     const secs = seconds % 60;
@@ -168,47 +194,38 @@ export default function Timer(props: TimerProps) {
     }
   };
 
-const handleStart = () => {
-  // 1. SYNCHRONOUS UNLOCK FRAME (Must run in the immediate touch event)
-  
-  // A. Unlock Web Audio Context (Do NOT await - fire and forget)
-  audio.initAudio?.();
-  audio.ensureContextReady?.(); 
-  audio.hapticFeedback?.(15);
+  // --- Control Handlers ---
+  const handleStart = () => {
+    // 1. Unlock audio synchronously
+    audio.initAudio();
+    audio.ensureContextReady().catch(() => {});
+    audio.hapticFeedback(15);
 
-  // B. Unlock iOS Web Speech
-  if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
-    const synth = window.speechSynthesis;
-    if (synth.paused) synth.resume();
-
-    // Do NOT call synth.cancel() here - it cancels the speak call on iOS Safari
-    const unlockUtterance = new SpeechSynthesisUtterance('ready');
-    unlockUtterance.volume = 0.05; // Audible enough for iOS to load engine, quiet enough to ignore
-    unlockUtterance.rate = 2.0;    // Fast rate so it clears immediately
-    synth.speak(unlockUtterance);
-  }
-
-  // C. Engage Wake Lock & Start Timer
-  audio.ensureContextReady().then(ready => {
-    if (ready) {
-      console.log('✅ AudioContext is running.');
-    } else {
-      console.warn('⚠️ AudioContext is NOT running.');
+    // 2. Unlock speech synthesis
+    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+      const synth = window.speechSynthesis;
+      if (synth.paused) synth.resume();
+      const unlockUtterance = new SpeechSynthesisUtterance('ready');
+      unlockUtterance.volume = 0.05;
+      unlockUtterance.rate = 2.0;
+      synth.speak(unlockUtterance);
     }
-  });
-  requestWakeLock();
-  startTimer();
 
-  // 2. BACKGROUND ASYNC WORK (Runs AFTER audio & timer are safely initialized)
-  if (props.onWorkoutStart) {
-    props.onWorkoutStart().catch(error => {
-      console.error('Failed to start workout record in Supabase:', error);
-    });
-  }
-};
+    // 3. Start timer
+    requestWakeLock();
+    startTimer();
+
+    // 4. Background async work
+    if (props.onWorkoutStart) {
+      props.onWorkoutStart().catch(error => {
+        console.error('Failed to start workout record in Supabase:', error);
+      });
+    }
+  };
 
   const handleEnd = async () => {
     audio.hapticFeedback([30, 30, 30]);
+    audio.cancel();
     if (props.onWorkoutEnd) {
       await props.onWorkoutEnd();
     }
@@ -228,10 +245,19 @@ const handleStart = () => {
 
   const handleReset = () => {
     audio.hapticFeedback([30, 30, 30]);
+    audio.cancel();
     resetTimer();
   };
 
   const isComplete = config.phase === 'finished';
+
+  // --- Callout Handling ---
+  useEffect(() => {
+    if (currentCallout && (config.phase === 'round' || config.phase === 'rest')) {
+      console.log(`📢 Callout: "${currentCallout}" (${currentCalloutCategory})`);
+      // Audio is triggered by useTimer - it uses audio.speak internally
+    }
+  }, [currentCallout, currentCalloutCategory, config.phase]);
 
   return (
     <div className="flex flex-col items-center justify-center min-h-[80vh] p-4">
@@ -242,11 +268,11 @@ const handleStart = () => {
             ? config.countdown 
             : formatTime(timeRemaining)}
         </div>
-        
+
         <div className="text-2xl font-semibold text-gray-300 mb-1">
           {getPhaseLabel()}
         </div>
-        
+
         <div className="text-sm text-gray-500 mb-4">
           {config.phase === 'countdown' && 'Get ready! 🥊'}
           {config.phase === 'round' && `Round ${config.currentRound}/${config.rounds}`}
@@ -254,7 +280,7 @@ const handleStart = () => {
           {isComplete && 'Great job! 🎉'}
         </div>
 
-        {/* Countdown Progress Bar - Show during countdown */}
+        {/* Progress Bar */}
         {config.phase === 'countdown' && (
           <div className="w-full mx-auto mb-8 bg-gray-700 rounded-full h-2.5 overflow-hidden">
             <div 
@@ -278,7 +304,7 @@ const handleStart = () => {
           </div>
         )}
 
-        {/* Regular Progress Bar (for rounds/rest) */}
+        {/* Regular Progress Bar */}
         {config.phase !== 'countdown' && (
           <div className="w-full mx-auto mb-8 bg-gray-700 rounded-full h-2.5 overflow-hidden">
             <div 
@@ -357,7 +383,7 @@ const handleStart = () => {
           {!isActive && isRunning && (
             <span className="text-yellow-500">💤 Screen may sleep</span>
           )}
-          {audio.isSpeaking() && ( // isSpeaking is now available
+          {audio.isSpeaking() && (
             <span className="text-blue-500">🔊 Speaking...</span>
           )}
           {props.currentWorkoutId && (
@@ -373,40 +399,69 @@ const handleStart = () => {
           >
             {showDebug ? 'Hide Debug' : 'Show Debug'}
           </button>
-          
+
           {showDebug && (
             <div className="mt-2 p-4 bg-gray-800 rounded-lg border border-gray-700">
-              <div className="text-xs text-gray-400 mb-2">🔊 Audio Test Panel</div>
+              <div className="text-xs text-gray-400 mb-2">🔊 Audio Debug Panel</div>
+              
+              {/* Audio Mode */}
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-xs text-gray-400">Mode:</span>
+                <button
+                  onClick={cycleAudioMode}
+                  className={`px-3 py-1 text-xs rounded transition-colors ${
+                    audio.audioMode === 'mp3' ? 'bg-blue-600' :
+                    audio.audioMode === 'speech' ? 'bg-green-600' :
+                    'bg-purple-600'
+                  } text-white`}
+                >
+                  {audio.audioMode.toUpperCase()}
+                </button>
+              </div>
+              
+              <div className="text-xs text-gray-500 mb-2">
+                Status: {audioStatus}
+              </div>
+              
+              <div className="text-xs text-gray-500 mb-2">
+                Speaking: {audio.isSpeaking() ? '✅ YES' : '❌ NO'}
+              </div>
+              
               <div className="text-xs text-gray-500 mb-2">
                 Context Ready: {audio.isContextReady() ? '✅ YES' : '❌ NO'}
-                {!audio.isContextReady() && ' (Click "Force Init" first)'}
               </div>
+
+              <div className="text-xs text-gray-400 mb-1">Test Buttons:</div>
               <div className="flex gap-2 justify-center flex-wrap">
-                {/* Force Init button */}
                 <button
                   onClick={forceInit}
                   className="px-3 py-1 text-xs bg-red-600 hover:bg-red-700 rounded transition-colors text-white"
                 >
                   🔄 Force Init
                 </button>
-                {/* Test buttons */}
                 <button
                   onClick={testBeep}
                   className="px-3 py-1 text-xs bg-blue-600 hover:bg-blue-700 rounded transition-colors text-white"
                 >
-                  Test Beep
+                  Beep
                 </button>
                 <button
                   onClick={testBell}
                   className="px-3 py-1 text-xs bg-purple-600 hover:bg-purple-700 rounded transition-colors text-white"
                 >
-                  Test Bell
+                  Bell
                 </button>
                 <button
-                  onClick={testLongBeep}
-                  className="px-3 py-1 text-xs bg-green-600 hover:bg-green-700 rounded transition-colors text-white"
+                  onClick={testCallout}
+                  className="px-3 py-1 text-xs bg-orange-600 hover:bg-orange-700 rounded transition-colors text-white"
                 >
-                  Long Beep
+                  Callout
+                </button>
+                <button
+                  onClick={testSpeech}
+                  className="px-3 py-1 text-xs bg-cyan-600 hover:bg-cyan-700 rounded transition-colors text-white"
+                >
+                  Speech
                 </button>
                 <button
                   onClick={testHalfway}
@@ -421,8 +476,12 @@ const handleStart = () => {
                   10s
                 </button>
               </div>
+
               <div className="mt-2 text-xs text-gray-500">
-                💡 Tip: Click "Force Init" first, then test sounds
+                💡 Mode: <strong>{audio.audioMode.toUpperCase()}</strong> - 
+                {audio.audioMode === 'mp3' && ' Uses MP3 files (requires ringer on)'}
+                {audio.audioMode === 'speech' && ' Uses text-to-speech (works on silent)'}
+                {audio.audioMode === 'hybrid' && ' Tries MP3 first, falls back to speech'}
               </div>
             </div>
           )}

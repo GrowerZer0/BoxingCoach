@@ -1,75 +1,17 @@
 'use client';
 
-import { useCallback, useRef, useEffect } from 'react';
+import { useCallback, useRef, useEffect, useState } from 'react';
 
+// --- Global State ---
 let globalAudioCtx: AudioContext | null = null;
 let activeAudioSources: Set<AudioBufferSourceNode> = new Set();
 let keepAliveInterval: NodeJS.Timeout | null = null;
+let audioUnlocked = false;
 
-// Synchronous unlock for Web Audio Context
-export const initAudio = (): AudioContext | null => {
-  if (typeof window === 'undefined') return null;
+// --- Audio Mode Types ---
+export type AudioMode = 'mp3' | 'speech' | 'hybrid';
 
-  const AudioContextClass =
-    window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
-
-  if (AudioContextClass) {
-    if (!globalAudioCtx || globalAudioCtx.state === 'closed') {
-      globalAudioCtx = new AudioContextClass();
-    }
-
-    if (globalAudioCtx.state === 'suspended') {
-      void globalAudioCtx.resume();
-    }
-
-    // Force-unlock iOS audio bus with silent buffer
-    try {
-      const buffer = globalAudioCtx.createBuffer(1, 1, 22050);
-      const source = globalAudioCtx.createBufferSource();
-      source.buffer = buffer;
-      source.connect(globalAudioCtx.destination);
-      source.start(0);
-      source.onended = () => {
-        source.disconnect();
-      };
-    } catch {
-      // Ignore initial unlock errors
-    }
-
-    // Start keep-alive interval to prevent iOS from suspending
-    if (!keepAliveInterval && globalAudioCtx.state === 'running') {
-      keepAliveInterval = setInterval(() => {
-        if (globalAudioCtx && globalAudioCtx.state === 'running') {
-          try {
-            // Play a silent buffer every 5 seconds to keep the audio bus alive
-            const buffer = globalAudioCtx.createBuffer(1, 1, 22050);
-            const source = globalAudioCtx.createBufferSource();
-            source.buffer = buffer;
-            source.connect(globalAudioCtx.destination);
-            source.start(0);
-            source.onended = () => {
-              source.disconnect();
-            };
-          } catch (e) {
-            // Silent fail
-          }
-        }
-      }, 3000); // Every 3 seconds
-    }
-  }
-
-  return globalAudioCtx;
-};
-
-// Clean up keep-alive
-export const cleanupAudio = () => {
-  if (keepAliveInterval) {
-    clearInterval(keepAliveInterval);
-    keepAliveInterval = null;
-  }
-};
-
-// Utility to slugify text
+// --- Utility Functions ---
 const slugify = (text: string) => {
   return text
     .toString()
@@ -82,37 +24,100 @@ const slugify = (text: string) => {
     .replace(/--+/g, '-');
 };
 
+// --- Audio Context Management ---
+export const initAudio = (): AudioContext | null => {
+  if (typeof window === 'undefined') return null;
+
+  const AudioContextClass =
+    window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+
+  if (!AudioContextClass) return null;
+
+  if (!globalAudioCtx || globalAudioCtx.state === 'closed') {
+    globalAudioCtx = new AudioContextClass();
+  }
+
+  // Resume if suspended
+  if (globalAudioCtx.state === 'suspended') {
+    void globalAudioCtx.resume();
+  }
+
+  // Unlock with silent buffer
+  try {
+    const buffer = globalAudioCtx.createBuffer(1, 1, 22050);
+    const source = globalAudioCtx.createBufferSource();
+    source.buffer = buffer;
+    source.connect(globalAudioCtx.destination);
+    source.start(0);
+    source.onended = () => source.disconnect();
+    audioUnlocked = true;
+  } catch {
+    // Ignore initial unlock errors
+  }
+
+  // Start keep-alive to prevent iOS suspension
+  if (!keepAliveInterval && globalAudioCtx.state === 'running') {
+    keepAliveInterval = setInterval(() => {
+      if (globalAudioCtx && globalAudioCtx.state === 'running') {
+        try {
+          const buffer = globalAudioCtx.createBuffer(1, 1, 22050);
+          const source = globalAudioCtx.createBufferSource();
+          source.buffer = buffer;
+          source.connect(globalAudioCtx.destination);
+          source.start(0);
+          source.onended = () => source.disconnect();
+        } catch {
+          // Silent fail
+        }
+      }
+    }, 3000);
+  }
+
+  return globalAudioCtx;
+};
+
+export const cleanupAudio = () => {
+  if (keepAliveInterval) {
+    clearInterval(keepAliveInterval);
+    keepAliveInterval = null;
+  }
+  if (globalAudioCtx) {
+    try {
+      globalAudioCtx.close();
+    } catch {
+      // Ignore
+    }
+    globalAudioCtx = null;
+  }
+  audioUnlocked = false;
+};
+
+// --- Main Hook ---
 export function useAudio() {
   const audioCtxRef = useRef<AudioContext | null>(null);
   const audioBufferCacheRef = useRef<Map<string, AudioBuffer>>(new Map());
+  const [audioMode, setAudioMode] = useState<AudioMode>('hybrid');
+  const [isReady, setIsReady] = useState(false);
 
+  // Initialize on mount
   useEffect(() => {
-    if (typeof window !== 'undefined') {
-      // Initialize audio context on mount
-      audioCtxRef.current = initAudio();
-    }
+    const ctx = initAudio();
+    audioCtxRef.current = ctx;
+    setIsReady(ctx?.state === 'running');
 
     return () => {
-      // Clean up keep-alive on unmount
       cleanupAudio();
     };
   }, []);
 
-  const handleInitAudio = useCallback((): AudioContext | null => {
-    const ctx = initAudio();
-    audioCtxRef.current = ctx;
-    return ctx;
-  }, []);
+  // --- Core Audio Functions ---
 
-  // CRITICAL FIX: Force context to be running and keep it that way
   const ensureContextRunning = useCallback(async (ctx: AudioContext): Promise<boolean> => {
     if (!ctx) return false;
 
-    // If context is suspended, resume it
     if (ctx.state === 'suspended') {
       try {
         await ctx.resume();
-        // Wait a tiny bit for the context to stabilize
         await new Promise(resolve => setTimeout(resolve, 50));
       } catch (e) {
         console.warn('Failed to resume AudioContext:', e);
@@ -120,7 +125,6 @@ export function useAudio() {
       }
     }
 
-    // If context is still not running, try the silent buffer trick
     if (ctx.state !== 'running') {
       try {
         const buffer = ctx.createBuffer(1, 1, 22050);
@@ -128,7 +132,6 @@ export function useAudio() {
         source.buffer = buffer;
         source.connect(ctx.destination);
         source.start(0);
-        // Small delay to let the unlock happen
         await new Promise(resolve => setTimeout(resolve, 100));
       } catch (e) {
         console.warn('Silent buffer unlock failed:', e);
@@ -141,20 +144,21 @@ export function useAudio() {
 
   const ensureContextReady = useCallback(async (): Promise<AudioContext | null> => {
     if (typeof window === 'undefined') return null;
-    const ctx = handleInitAudio();
+    const ctx = initAudio();
+    audioCtxRef.current = ctx;
     if (ctx) {
       const ready = await ensureContextRunning(ctx);
-      if (ready) {
-        return ctx;
-      }
+      setIsReady(ready);
+      return ready ? ctx : null;
     }
     return null;
-  }, [handleInitAudio, ensureContextRunning]);
+  }, [ensureContextRunning]);
 
   const isContextReady = useCallback(() => {
     return globalAudioCtx !== null && globalAudioCtx.state === 'running';
   }, []);
 
+  // --- Haptic Feedback ---
   const hapticFeedback = useCallback((pattern: number | number[] = 10) => {
     if (typeof window !== 'undefined' && 'vibrate' in navigator) {
       try {
@@ -165,17 +169,14 @@ export function useAudio() {
     }
   }, []);
 
-  // Fixed Synthesizer using properly awaited context
+  // --- Synthesized Beeps ---
   const playBeep = useCallback(async (freq = 800, duration = 0.15, type: OscillatorType = 'sine') => {
     try {
-      const ctx = handleInitAudio();
-      if (!ctx) return;
+      const ctx = initAudio();
+      if (!ctx) return false;
 
       const ready = await ensureContextRunning(ctx);
-      if (!ready) {
-        console.warn('AudioContext not ready for beep');
-        return;
-      }
+      if (!ready) return false;
 
       const now = ctx.currentTime;
       const osc = ctx.createOscillator();
@@ -192,13 +193,16 @@ export function useAudio() {
 
       osc.start(now);
       osc.stop(now + duration);
+      
+      return true;
     } catch (e) {
       console.warn('Audio playBeep failed:', e);
+      return false;
     }
-  }, [handleInitAudio, ensureContextRunning]);
+  }, [ensureContextRunning]);
 
   const playLongBeep = useCallback(async (freq = 1000, duration = 0.6, type: OscillatorType = 'sine') => {
-    await playBeep(freq, duration, type);
+    return await playBeep(freq, duration, type);
   }, [playBeep]);
 
   const playHalfway = useCallback(async () => {
@@ -212,17 +216,13 @@ export function useAudio() {
     await playBeep(900, 0.2, 'square');
   }, [playBeep]);
 
-  // Fixed Layered Boxing Ring Bell
   const playBell = useCallback(async () => {
     try {
-      const ctx = handleInitAudio();
-      if (!ctx) return;
+      const ctx = initAudio();
+      if (!ctx) return false;
 
       const ready = await ensureContextRunning(ctx);
-      if (!ready) {
-        console.warn('AudioContext not ready for bell');
-        return;
-      }
+      if (!ready) return false;
 
       const freqs = [800, 1230, 1640];
       const now = ctx.currentTime;
@@ -244,32 +244,68 @@ export function useAudio() {
         osc.start(now);
         osc.stop(now + 1.5);
       });
+      
+      return true;
     } catch (e) {
       console.warn('Audio playBell failed:', e);
+      return false;
     }
-  }, [handleInitAudio, ensureContextRunning]);
+  }, [ensureContextRunning]);
 
-  // FIXED: Text-To-Speech using pre-generated audio files with proper context handling
-  const speakText = useCallback(async (text: string, _priority?: string, onEnd?: () => void) => {
+  // --- Speech Synthesis (Works on Silent Mode) ---
+  const speakWithSpeechSynthesis = useCallback((text: string, onEnd?: () => void) => {
+    if (typeof window === 'undefined' || !('speechSynthesis' in window)) {
+      console.warn('Speech synthesis not available');
+      onEnd?.();
+      return;
+    }
+
+    try {
+      // Cancel any ongoing speech
+      window.speechSynthesis.cancel();
+
+      const utterance = new SpeechSynthesisUtterance(text);
+      utterance.rate = 0.9;
+      utterance.pitch = 1;
+      utterance.volume = 1;
+
+      utterance.onend = () => {
+        console.log(`✅ Speech synthesis ended: "${text}"`);
+        onEnd?.();
+      };
+
+      utterance.onerror = (e) => {
+        console.warn(`Speech synthesis error for "${text}":`, e);
+        onEnd?.();
+      };
+
+      window.speechSynthesis.speak(utterance);
+    } catch (e) {
+      console.error('Speech synthesis failed:', e);
+      onEnd?.();
+    }
+  }, []);
+
+  // --- MP3 Playback via Web Audio ---
+  const speakText = useCallback(async (text: string, onEnd?: () => void) => {
     if (typeof window === 'undefined') {
       onEnd?.();
-      return;
+      return false;
     }
 
-    // Get or create the context
-    const ctx = handleInitAudio();
+    console.log(`🔊 MP3 speak: "${text}"`);
+
+    const ctx = initAudio();
     if (!ctx) {
-      console.warn('No AudioContext available for speakText');
       onEnd?.();
-      return;
+      return false;
     }
 
-    // CRITICAL FIX: Ensure the context is running before we do anything
     const ready = await ensureContextRunning(ctx);
     if (!ready) {
-      console.warn(`AudioContext not ready for speakText: "${text}"`);
+      console.warn(`AudioContext not ready for: "${text}"`);
       onEnd?.();
-      return;
+      return false;
     }
 
     const slug = slugify(text);
@@ -278,7 +314,6 @@ export function useAudio() {
 
     const playBuffer = (buffer: AudioBuffer) => {
       try {
-        // Context is guaranteed to be running here
         const source = ctx.createBufferSource();
         source.buffer = buffer;
         source.connect(ctx.destination);
@@ -290,51 +325,131 @@ export function useAudio() {
           source.disconnect();
           onEnd?.();
         };
+
+        // AudioBufferSourceNode doesn't have onerror, use try/catch instead
         source.start(0);
+        return true;
       } catch (e) {
-        console.warn(`Failed to play audio for "${text}":`, e);
+        console.error(`Failed to play: "${text}"`, e);
         onEnd?.();
+        return false;
       }
     };
 
-    // Check cache first
     if (cache.has(slug)) {
-      playBuffer(cache.get(slug)!);
-      return;
+      return playBuffer(cache.get(slug)!);
     }
 
-    // Fetch and decode the audio file
     try {
       const response = await fetch(audioPath);
       if (!response.ok) {
-        throw new Error(`Failed to fetch audio file: ${audioPath}, status: ${response.status}`);
+        throw new Error(`Failed to fetch: ${audioPath}, status: ${response.status}`);
       }
+
       const arrayBuffer = await response.arrayBuffer();
       const audioBuffer = await ctx.decodeAudioData(arrayBuffer);
       cache.set(slug, audioBuffer);
-      playBuffer(audioBuffer);
+      return playBuffer(audioBuffer);
     } catch (e) {
-      console.warn(`Failed to load or play audio for "${text}":`, e);
+      console.warn(`Failed to load audio for "${text}":`, e);
       onEnd?.();
+      return false;
     }
-  }, [handleInitAudio, ensureContextRunning]);
+  }, [ensureContextRunning]);
 
-  const isSpeaking = useCallback(() => {
-    return activeAudioSources.size > 0;
+  // --- HTML5 Audio Fallback ---
+  const playWithHTML5 = useCallback((audioPath: string): Promise<void> => {
+    return new Promise((resolve, reject) => {
+      const audio = new Audio(audioPath);
+      
+      audio.onended = () => {
+        audio.src = ''; // Clean up
+        resolve();
+      };
+      
+      audio.onerror = (e) => {
+        audio.src = ''; // Clean up
+        reject(e);
+      };
+      
+      const playPromise = audio.play();
+      if (playPromise !== undefined) {
+        playPromise.catch((error) => {
+          audio.src = ''; // Clean up
+          reject(error);
+        });
+      }
+    });
   }, []);
 
+  // --- Unified Speak (Hybrid Mode) ---
+  const speak = useCallback(async (text: string, onEnd?: () => void) => {
+    console.log(`🎯 Speaking: "${text}" (mode: ${audioMode})`);
+
+    if (audioMode === 'speech') {
+      speakWithSpeechSynthesis(text, onEnd);
+      return true;
+    }
+
+    if (audioMode === 'mp3') {
+      return await speakText(text, onEnd);
+    }
+
+    // Hybrid mode: Try MP3 first, fallback to speech synthesis
+    try {
+      const success = await speakText(text, () => {
+        // MP3 completed
+        onEnd?.();
+      });
+      
+      if (success) {
+        return true;
+      }
+      
+      // MP3 failed, use speech synthesis
+      console.log('MP3 failed, falling back to speech synthesis');
+      speakWithSpeechSynthesis(text, onEnd);
+      return true;
+      
+    } catch (e) {
+      console.warn('MP3 playback error, using speech synthesis:', e);
+      speakWithSpeechSynthesis(text, onEnd);
+      return true;
+    }
+  }, [audioMode, speakText, speakWithSpeechSynthesis]);
+
+  // --- Cancel All Audio ---
   const cancel = useCallback(() => {
+    // Cancel Web Audio
     activeAudioSources.forEach(source => {
       try {
         source.stop();
         source.disconnect();
-      } catch (e) {
+      } catch {
         // Ignore
       }
     });
     activeAudioSources.clear();
+
+    // Cancel Speech Synthesis
+    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+      try {
+        window.speechSynthesis.cancel();
+      } catch {
+        // Ignore
+      }
+    }
   }, []);
 
+  const isSpeaking = useCallback(() => {
+    if (activeAudioSources.size > 0) return true;
+    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+      return window.speechSynthesis.speaking;
+    }
+    return false;
+  }, []);
+
+  // --- Preload Audio Files ---
   const preloadAudio = useCallback(async (texts: string[]) => {
     if (typeof window === 'undefined') return;
     const ctx = await ensureContextReady();
@@ -350,33 +465,56 @@ export function useAudio() {
       const audioPath = `/audio/${slug}.mp3`;
       try {
         const response = await fetch(audioPath);
-        if (!response.ok) {
-          throw new Error(`Failed to fetch audio file for preloading: ${audioPath}, status: ${response.status}`);
-        }
+        if (!response.ok) throw new Error(`Failed to fetch: ${audioPath}`);
         const arrayBuffer = await response.arrayBuffer();
         const audioBuffer = await ctx.decodeAudioData(arrayBuffer);
         cache.set(slug, audioBuffer);
       } catch (e) {
-        console.warn(`Failed to preload audio for "${text}":`, e);
+        console.warn(`Failed to preload "${text}":`, e);
       }
     });
     await Promise.all(promises);
   }, [ensureContextReady]);
 
+  // --- Set Audio Mode ---
+  const setMode = useCallback((mode: AudioMode) => {
+    console.log(`Setting audio mode to: ${mode}`);
+    setAudioMode(mode);
+  }, []);
+
   return {
-    initAudio: handleInitAudio,
+    // Core
+    initAudio,
     ensureContextReady,
     isContextReady,
+    isReady,
+    
+    // Haptics
     hapticFeedback,
-    playBell,
+    
+    // Synthesized sounds (always work)
     playBeep,
     playLongBeep,
     playHalfway,
     playTenSeconds,
+    playBell,
+    
+    // Unified speak (works everywhere)
+    speak,
+    
+    // Individual methods (for testing)
     speakText,
-    isSpeaking,
+    speakWithSpeechSynthesis,
+    playWithHTML5,
+    
+    // Control
     cancel,
+    isSpeaking,
     preloadAudio,
+    
+    // Settings
+    audioMode,
+    setMode,
   };
 }
 
