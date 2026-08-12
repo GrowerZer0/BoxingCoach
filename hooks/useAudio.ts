@@ -3,7 +3,8 @@
 import { useCallback, useRef, useEffect } from 'react';
 
 let globalAudioCtx: AudioContext | null = null;
-let activeAudioSources: Set<AudioBufferSourceNode> = new Set(); // Global set to track all active sources for speakText
+let activeAudioSources: Set<AudioBufferSourceNode> = new Set();
+let keepAliveInterval: NodeJS.Timeout | null = null;
 
 // Synchronous unlock for Web Audio Context
 export const initAudio = (): AudioContext | null => {
@@ -34,9 +35,38 @@ export const initAudio = (): AudioContext | null => {
     } catch {
       // Ignore initial unlock errors
     }
+
+    // Start keep-alive interval to prevent iOS from suspending
+    if (!keepAliveInterval && globalAudioCtx.state === 'running') {
+      keepAliveInterval = setInterval(() => {
+        if (globalAudioCtx && globalAudioCtx.state === 'running') {
+          try {
+            // Play a silent buffer every 5 seconds to keep the audio bus alive
+            const buffer = globalAudioCtx.createBuffer(1, 1, 22050);
+            const source = globalAudioCtx.createBufferSource();
+            source.buffer = buffer;
+            source.connect(globalAudioCtx.destination);
+            source.start(0);
+            source.onended = () => {
+              source.disconnect();
+            };
+          } catch (e) {
+            // Silent fail
+          }
+        }
+      }, 3000); // Every 3 seconds
+    }
   }
 
   return globalAudioCtx;
+};
+
+// Clean up keep-alive
+export const cleanupAudio = () => {
+  if (keepAliveInterval) {
+    clearInterval(keepAliveInterval);
+    keepAliveInterval = null;
+  }
 };
 
 // Utility to slugify text
@@ -52,14 +82,20 @@ const slugify = (text: string) => {
     .replace(/--+/g, '-');
 };
 
-export function useAudio() { // Changed to named function export
+export function useAudio() {
   const audioCtxRef = useRef<AudioContext | null>(null);
   const audioBufferCacheRef = useRef<Map<string, AudioBuffer>>(new Map());
 
   useEffect(() => {
     if (typeof window !== 'undefined') {
-      audioCtxRef.current = globalAudioCtx;
+      // Initialize audio context on mount
+      audioCtxRef.current = initAudio();
     }
+
+    return () => {
+      // Clean up keep-alive on unmount
+      cleanupAudio();
+    };
   }, []);
 
   const handleInitAudio = useCallback((): AudioContext | null => {
@@ -68,29 +104,52 @@ export function useAudio() { // Changed to named function export
     return ctx;
   }, []);
 
-  // Synchronously ensure context is running before executing nodes
-  const ensureContextRunning = useCallback((ctx: AudioContext, callback: () => void) => {
+  // CRITICAL FIX: Force context to be running and keep it that way
+  const ensureContextRunning = useCallback(async (ctx: AudioContext): Promise<boolean> => {
+    if (!ctx) return false;
+
+    // If context is suspended, resume it
     if (ctx.state === 'suspended') {
-      ctx.resume().then(() => {
-        callback();
-      }).catch(() => {});
-    } else {
-      callback();
+      try {
+        await ctx.resume();
+        // Wait a tiny bit for the context to stabilize
+        await new Promise(resolve => setTimeout(resolve, 50));
+      } catch (e) {
+        console.warn('Failed to resume AudioContext:', e);
+        return false;
+      }
     }
+
+    // If context is still not running, try the silent buffer trick
+    if (ctx.state !== 'running') {
+      try {
+        const buffer = ctx.createBuffer(1, 1, 22050);
+        const source = ctx.createBufferSource();
+        source.buffer = buffer;
+        source.connect(ctx.destination);
+        source.start(0);
+        // Small delay to let the unlock happen
+        await new Promise(resolve => setTimeout(resolve, 100));
+      } catch (e) {
+        console.warn('Silent buffer unlock failed:', e);
+        return false;
+      }
+    }
+
+    return ctx.state === 'running';
   }, []);
 
   const ensureContextReady = useCallback(async (): Promise<AudioContext | null> => {
     if (typeof window === 'undefined') return null;
     const ctx = handleInitAudio();
-    if (ctx && ctx.state === 'suspended') {
-      try {
-        await ctx.resume();
-      } catch (e) {
-        console.warn('Failed to resume AudioContext:', e);
+    if (ctx) {
+      const ready = await ensureContextRunning(ctx);
+      if (ready) {
+        return ctx;
       }
     }
-    return ctx;
-  }, [handleInitAudio]);
+    return null;
+  }, [handleInitAudio, ensureContextRunning]);
 
   const isContextReady = useCallback(() => {
     return globalAudioCtx !== null && globalAudioCtx.state === 'running';
@@ -106,183 +165,171 @@ export function useAudio() { // Changed to named function export
     }
   }, []);
 
-  // Fixed Synthesizer using safely resolved execution frame
-  const playBeep = useCallback((freq = 800, duration = 0.15, type: OscillatorType = 'sine') => {
+  // Fixed Synthesizer using properly awaited context
+  const playBeep = useCallback(async (freq = 800, duration = 0.15, type: OscillatorType = 'sine') => {
     try {
       const ctx = handleInitAudio();
       if (!ctx) return;
 
-      ensureContextRunning(ctx, () => {
-        const now = ctx.currentTime;
-        const osc = ctx.createOscillator();
-        const gain = ctx.createGain();
+      const ready = await ensureContextRunning(ctx);
+      if (!ready) {
+        console.warn('AudioContext not ready for beep');
+        return;
+      }
 
-        osc.type = type;
-        osc.frequency.setValueAtTime(freq, now);
+      const now = ctx.currentTime;
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
 
-        gain.gain.setValueAtTime(0.3, now);
-        gain.gain.exponentialRampToValueAtTime(0.0001, now + duration);
+      osc.type = type;
+      osc.frequency.setValueAtTime(freq, now);
 
-        osc.connect(gain);
-        gain.connect(ctx.destination);
+      gain.gain.setValueAtTime(0.3, now);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + duration);
 
-        osc.start(now);
-        osc.stop(now + duration);
-      });
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+
+      osc.start(now);
+      osc.stop(now + duration);
     } catch (e) {
       console.warn('Audio playBeep failed:', e);
     }
   }, [handleInitAudio, ensureContextRunning]);
 
-  const playLongBeep = useCallback((freq = 1000, duration = 0.6, type: OscillatorType = 'sine') => {
-    playBeep(freq, duration, type);
+  const playLongBeep = useCallback(async (freq = 1000, duration = 0.6, type: OscillatorType = 'sine') => {
+    await playBeep(freq, duration, type);
   }, [playBeep]);
 
-  const playHalfway = useCallback(() => {
-    playBeep(600, 0.2, 'sine');
+  const playHalfway = useCallback(async () => {
+    await playBeep(600, 0.2, 'sine');
     setTimeout(() => {
       playBeep(800, 0.3, 'sine');
     }, 120);
   }, [playBeep]);
 
-  const playTenSeconds = useCallback(() => {
-    playBeep(900, 0.2, 'square');
+  const playTenSeconds = useCallback(async () => {
+    await playBeep(900, 0.2, 'square');
   }, [playBeep]);
 
   // Fixed Layered Boxing Ring Bell
-  const playBell = useCallback(() => {
+  const playBell = useCallback(async () => {
     try {
       const ctx = handleInitAudio();
       if (!ctx) return;
 
-      ensureContextRunning(ctx, () => {
-        const freqs = [800, 1230, 1640];
-        const now = ctx.currentTime;
+      const ready = await ensureContextRunning(ctx);
+      if (!ready) {
+        console.warn('AudioContext not ready for bell');
+        return;
+      }
 
-        freqs.forEach((freq, idx) => {
-          const osc = ctx.createOscillator();
-          const gain = ctx.createGain();
+      const freqs = [800, 1230, 1640];
+      const now = ctx.currentTime;
 
-          osc.type = 'sine';
-          osc.frequency.setValueAtTime(freq, now);
+      freqs.forEach((freq, idx) => {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
 
-          const initialVolume = idx === 0 ? 0.35 : 0.15;
-          gain.gain.setValueAtTime(initialVolume, now);
-          gain.gain.exponentialRampToValueAtTime(0.0001, now + 1.5);
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(freq, now);
 
-          osc.connect(gain);
-          gain.connect(ctx.destination);
+        const initialVolume = idx === 0 ? 0.35 : 0.15;
+        gain.gain.setValueAtTime(initialVolume, now);
+        gain.gain.exponentialRampToValueAtTime(0.0001, now + 1.5);
 
-          osc.start(now);
-          osc.stop(now + 1.5);
-        });
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+
+        osc.start(now);
+        osc.stop(now + 1.5);
       });
     } catch (e) {
       console.warn('Audio playBell failed:', e);
     }
   }, [handleInitAudio, ensureContextRunning]);
 
-  // Text-To-Speech using pre-generated audio files
-const speakText = useCallback(async (text: string, _priority?: string, onEnd?: () => void) => {
-  if (typeof window === 'undefined') {
-    onEnd?.();
-    return;
-  }
-
-  // 1. Ensure the context exists and is forced to be ready
-  const ctx = handleInitAudio();
-  if (!ctx) {
-    onEnd?.();
-    return;
-  }
-
-  // 2. CRITICAL FIX: Force the context to be running synchronously if possible.
-  // If it's suspended, resume it and wait for the promise to resolve.
-  if (ctx.state === 'suspended') {
-    try {
-      await ctx.resume(); // Wait for the resume to complete
-    } catch (e) {
-      console.warn('Failed to resume AudioContext before speakText:', e);
+  // FIXED: Text-To-Speech using pre-generated audio files with proper context handling
+  const speakText = useCallback(async (text: string, _priority?: string, onEnd?: () => void) => {
+    if (typeof window === 'undefined') {
       onEnd?.();
       return;
     }
-  }
 
-  // If ctx.state is still not running after resume, we'll try to force it with a silent buffer.
-  // This is the iOS unlock technique, similar to what we do in initAudio.
-  if (ctx.state !== 'running') {
-    try {
-      const buffer = ctx.createBuffer(1, 1, 22050);
-      const unlockSource = ctx.createBufferSource();
-      unlockSource.buffer = buffer;
-      unlockSource.connect(ctx.destination);
-      unlockSource.start(0);
-      // We don't need to wait for the unlock to finish, just start it.
-    } catch {
-      // Ignore unlock errors
-    }
-  }
-
-  // 3. If after all that, the context is still not running, give up.
-  if (ctx.state !== 'running') {
-    console.warn('AudioContext not running, skipping speakText:', text);
-    onEnd?.();
-    return;
-  }
-
-  const slug = slugify(text);
-  const audioPath = `/audio/${slug}.mp3`;
-  const cache = audioBufferCacheRef.current;
-
-  const playBuffer = (buffer: AudioBuffer) => {
-    // At this point, ctx.state should be 'running' because we forced it above.
-    const source = ctx.createBufferSource();
-    source.buffer = buffer;
-    source.connect(ctx.destination);
-
-    activeAudioSources.add(source);
-
-    source.onended = () => {
-      activeAudioSources.delete(source);
-      source.disconnect();
+    // Get or create the context
+    const ctx = handleInitAudio();
+    if (!ctx) {
+      console.warn('No AudioContext available for speakText');
       onEnd?.();
-    };
-    source.start(0);
-  };
-
-  if (cache.has(slug)) {
-    playBuffer(cache.get(slug)!);
-    return;
-  }
-
-  try {
-    const response = await fetch(audioPath);
-    if (!response.ok) {
-      throw new Error(`Failed to fetch audio file: ${audioPath}, status: ${response.status}`);
+      return;
     }
-    const arrayBuffer = await response.arrayBuffer();
-    const audioBuffer = await ctx.decodeAudioData(arrayBuffer);
-    cache.set(slug, audioBuffer);
-    playBuffer(audioBuffer);
-  } catch (e) {
-    console.warn(`Failed to load or play audio for "${text}":`, e);
-    onEnd?.(); // Ensure the callout queue doesn't hang
-  }
-}, [handleInitAudio]);
+
+    // CRITICAL FIX: Ensure the context is running before we do anything
+    const ready = await ensureContextRunning(ctx);
+    if (!ready) {
+      console.warn(`AudioContext not ready for speakText: "${text}"`);
+      onEnd?.();
+      return;
+    }
+
+    const slug = slugify(text);
+    const audioPath = `/audio/${slug}.mp3`;
+    const cache = audioBufferCacheRef.current;
+
+    const playBuffer = (buffer: AudioBuffer) => {
+      try {
+        // Context is guaranteed to be running here
+        const source = ctx.createBufferSource();
+        source.buffer = buffer;
+        source.connect(ctx.destination);
+
+        activeAudioSources.add(source);
+
+        source.onended = () => {
+          activeAudioSources.delete(source);
+          source.disconnect();
+          onEnd?.();
+        };
+        source.start(0);
+      } catch (e) {
+        console.warn(`Failed to play audio for "${text}":`, e);
+        onEnd?.();
+      }
+    };
+
+    // Check cache first
+    if (cache.has(slug)) {
+      playBuffer(cache.get(slug)!);
+      return;
+    }
+
+    // Fetch and decode the audio file
+    try {
+      const response = await fetch(audioPath);
+      if (!response.ok) {
+        throw new Error(`Failed to fetch audio file: ${audioPath}, status: ${response.status}`);
+      }
+      const arrayBuffer = await response.arrayBuffer();
+      const audioBuffer = await ctx.decodeAudioData(arrayBuffer);
+      cache.set(slug, audioBuffer);
+      playBuffer(audioBuffer);
+    } catch (e) {
+      console.warn(`Failed to load or play audio for "${text}":`, e);
+      onEnd?.();
+    }
+  }, [handleInitAudio, ensureContextRunning]);
 
   const isSpeaking = useCallback(() => {
-    // Check if there are any active audio sources from speakText
     return activeAudioSources.size > 0;
   }, []);
 
   const cancel = useCallback(() => {
-    // Stop all active audio sources
     activeAudioSources.forEach(source => {
       try {
         source.stop();
         source.disconnect();
       } catch (e) {
-        console.warn('Error stopping audio source:', e);
+        // Ignore
       }
     });
     activeAudioSources.clear();
@@ -299,9 +346,7 @@ const speakText = useCallback(async (text: string, _priority?: string, onEnd?: (
     const cache = audioBufferCacheRef.current;
     const promises = texts.map(async (text) => {
       const slug = slugify(text);
-      if (cache.has(slug)) {
-        return; // Already cached
-      }
+      if (cache.has(slug)) return;
       const audioPath = `/audio/${slug}.mp3`;
       try {
         const response = await fetch(audioPath);
@@ -329,10 +374,10 @@ const speakText = useCallback(async (text: string, _priority?: string, onEnd?: (
     playHalfway,
     playTenSeconds,
     speakText,
-    isSpeaking, // New
-    cancel,     // New
-    preloadAudio, // New
+    isSpeaking,
+    cancel,
+    preloadAudio,
   };
 }
 
-export default useAudio; // Default export
+export default useAudio;
